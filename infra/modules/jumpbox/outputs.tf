@@ -22,6 +22,12 @@ output "admin_username" {
   value       = random_string.admin_username.result
 }
 
+output "bootstrap_ssh_private_key" {
+  description = "Bootstrap SSH private key retained in Terraform state for break-glass access"
+  value       = azapi_resource_action.bootstrap_ssh_keypair.output.privateKey
+  sensitive   = true
+}
+
 output "principal_id" {
   description = "Principal ID of the VM's managed identity"
   value       = azurerm_linux_virtual_machine.jumpbox.identity[0].principal_id

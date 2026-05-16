@@ -15,7 +15,7 @@ The Terraform under `infra/` deploys:
 - Daily auto-shutdown at 7 PM Pacific time
 - Weekday auto-start at 8 AM Pacific time using Azure Automation
 
-No SSH key pair is generated, stored, output, or used for normal access.
+Terraform generates an internal bootstrap SSH key pair only because the Azure Linux VM resource requires an `admin_ssh_key` when password authentication is disabled. The private key is not written locally, but it is retained in Terraform state and exposed as a sensitive output for break-glass use. Normal developer access still uses Entra ID only.
 
 ```mermaid
 flowchart LR
@@ -90,6 +90,13 @@ Install extensions once:
 ```powershell
 az extension add --name bastion
 az extension add --name ssh
+```
+
+Break-glass retrieval if Entra login is unavailable:
+
+```powershell
+terraform -chdir=infra output -raw jumpbox_admin_username
+terraform -chdir=infra output -raw jumpbox_bootstrap_ssh_private_key
 ```
 
 ## Start The Local SOCKS Proxy

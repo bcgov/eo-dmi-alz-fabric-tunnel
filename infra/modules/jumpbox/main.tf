@@ -2,8 +2,8 @@
 # Azure Linux VM (Jumpbox/Tunnel) Module
 # -----------------------------------------------------------------------------
 # Creates a minimal Linux VM used only as an Azure Bastion SOCKS tunnel endpoint.
-# Authentication is through Microsoft Entra ID SSH login; no SSH key pair is
-# generated or written locally.
+# Authentication is through Microsoft Entra ID SSH login. AzureRM still requires
+# a bootstrap SSH public key for VM creation, but no private key is written locally.
 # -----------------------------------------------------------------------------
 
 resource "random_string" "admin_username" {
@@ -14,6 +14,33 @@ resource "random_string" "admin_username" {
 }
 
 data "azurerm_subscription" "current" {}
+
+# AzureRM requires at least one admin_ssh_key when password auth is disabled.
+# The key is used only to satisfy VM creation; developer access stays Entra-only.
+resource "azapi_resource" "bootstrap_ssh_public_key" {
+  type      = "Microsoft.Compute/sshPublicKeys@2022-11-01"
+  name      = "${var.app_name}-jumpbox-bootstrap-ssh-key"
+  location  = var.location
+  parent_id = "/subscriptions/${data.azurerm_subscription.current.subscription_id}/resourceGroups/${var.resource_group_name}"
+
+  body = {}
+
+  tags = var.common_tags
+  lifecycle {
+    ignore_changes = [tags]
+  }
+}
+
+resource "azapi_resource_action" "bootstrap_ssh_keypair" {
+  type        = "Microsoft.Compute/sshPublicKeys@2022-11-01"
+  resource_id = azapi_resource.bootstrap_ssh_public_key.id
+  action      = "generateKeyPair"
+  method      = "POST"
+
+  # Keep the private key in Terraform state for break-glass retrieval, but do
+  # not write it to disk.
+  response_export_values = ["publicKey", "privateKey"]
+}
 
 resource "azurerm_network_interface" "jumpbox" {
   name                = "${var.app_name}-jumpbox-nic"
@@ -44,6 +71,11 @@ resource "azurerm_linux_virtual_machine" "jumpbox" {
   network_interface_ids = [
     azurerm_network_interface.jumpbox.id,
   ]
+
+  admin_ssh_key {
+    username   = random_string.admin_username.result
+    public_key = azapi_resource_action.bootstrap_ssh_keypair.output.publicKey
+  }
 
   os_disk {
     caching              = "ReadWrite"

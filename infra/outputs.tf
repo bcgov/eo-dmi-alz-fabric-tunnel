@@ -8,6 +8,17 @@ output "jumpbox_vm_id" {
   value       = var.enable_jumpbox ? module.jumpbox[0].vm_id : null
 }
 
+output "jumpbox_admin_username" {
+  description = "Admin username for the jumpbox VM"
+  value       = var.enable_jumpbox ? module.jumpbox[0].admin_username : null
+}
+
+output "jumpbox_bootstrap_ssh_private_key" {
+  description = "Bootstrap SSH private key retained in Terraform state for break-glass access"
+  value       = var.enable_jumpbox ? module.jumpbox[0].bootstrap_ssh_private_key : null
+  sensitive   = true
+}
+
 
 
 output "jumpbox_auto_shutdown_time" {
