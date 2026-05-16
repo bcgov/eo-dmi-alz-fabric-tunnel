@@ -48,6 +48,26 @@ output "automation_account_id" {
   value       = azurerm_automation_account.jumpbox.id
 }
 
+output "automation_account_name" {
+  description = "Name of the Azure Automation Account used for jumpbox and optional Bastion automation"
+  value       = azurerm_automation_account.jumpbox.name
+}
+
+output "bastion_automation_enabled" {
+  description = "Whether Bastion delete/recreate automation runbooks are enabled"
+  value       = var.enable_bastion && var.enable_bastion_automation
+}
+
+output "bastion_create_runbook_name" {
+  description = "Runbook name that recreates Bastion on demand"
+  value       = var.enable_bastion && var.enable_bastion_automation ? azurerm_automation_runbook.create_bastion[0].name : null
+}
+
+output "bastion_delete_runbook_name" {
+  description = "Runbook name that deletes Bastion after hours"
+  value       = var.enable_bastion && var.enable_bastion_automation ? azurerm_automation_runbook.delete_bastion[0].name : null
+}
+
 output "entra_login_enabled" {
   description = "Whether Microsoft Entra ID SSH login is enabled on the jumpbox"
   value       = var.enable_entra_login

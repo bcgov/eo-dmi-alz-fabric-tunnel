@@ -241,6 +241,9 @@ Schedule details:
 - Auto-shutdown: 7 PM Pacific, every day
 - Weekends: VM remains stopped unless a developer starts it manually
 - Bastion cost is separate from VM cost and applies while Bastion exists
+- Optional Bastion automation is available behind `enable_bastion_automation = true`. It deletes Bastion daily at 7 PM Pacific and recreates it weekdays at 8 AM Pacific by using Azure Automation runbooks.
+- You can manually start the Bastion create runbook to bring Bastion back on demand. Use the Terraform outputs for the Automation account and runbook names after enabling the feature.
+- Bastion delete and recreate happens outside Terraform. If you run `terraform plan` while Bastion is intentionally absent, Terraform will show Bastion as missing and ready to recreate.
 
 ## GitHub Actions Deployment
 

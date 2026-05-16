@@ -69,6 +69,13 @@ variable "enable_bastion" {
   type        = bool
   default     = true
 }
+
+variable "enable_bastion_automation" {
+  description = "Enable Azure Automation runbooks that delete Bastion after hours and recreate it on weekdays or on demand"
+  type        = bool
+  default     = true
+}
+
 variable "enable_jumpbox" {
   description = "Enable deployment of the Azure Jumpbox VM"
   type        = bool

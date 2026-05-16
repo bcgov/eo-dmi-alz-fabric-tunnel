@@ -57,3 +57,33 @@ variable "enable_entra_login" {
   type        = bool
   default     = true
 }
+
+variable "enable_bastion" {
+  description = "Whether the Bastion host is deployed for this environment"
+  type        = bool
+  default     = true
+}
+
+variable "enable_bastion_automation" {
+  description = "Enable Azure Automation runbooks that delete and recreate Bastion on a schedule and on demand"
+  type        = bool
+  default     = false
+}
+
+variable "bastion_subnet_id" {
+  description = "Subnet ID for Azure Bastion"
+  type        = string
+  default     = null
+}
+
+variable "bastion_sku" {
+  description = "Bastion SKU used when the automation runbook recreates Bastion"
+  type        = string
+  default     = "Standard"
+}
+
+variable "bastion_tunneling_enabled" {
+  description = "Enable native client tunneling when the automation runbook recreates Bastion"
+  type        = bool
+  default     = true
+}

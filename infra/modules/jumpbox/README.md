@@ -300,6 +300,15 @@ The auto-start feature uses Azure Automation with a Python3 runbook:
 
 This does not add SSH keys or alternative VM login methods. It only grants the Automation Account permission to start the VM.
 
+Optional Bastion cost automation can use the same Automation Account when `enable_bastion_automation = true`:
+
+- **Create Runbook**: `Create-BastionHost` recreates the Bastion host and its public IP
+- **Delete Runbook**: `Delete-BastionHost` deletes the Bastion host and its public IP
+- **Schedules**: Weekday 8 AM Pacific create, daily 7 PM Pacific delete
+- **Manual Recovery**: You can start `Create-BastionHost` manually from Azure Automation to bring Bastion back on demand
+
+Because Bastion delete and recreate happens outside Terraform, an off-hours `terraform plan` will show Bastion as absent and ready to recreate. Once the runbook recreates Bastion with the same names, Terraform returns to the expected state.
+
 ## Subnet Allocation
 
 | Subnet | CIDR | Purpose |

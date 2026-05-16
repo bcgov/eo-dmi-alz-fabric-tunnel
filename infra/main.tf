@@ -54,12 +54,17 @@ module "jumpbox" {
   source = "./modules/jumpbox"
   count  = var.enable_jumpbox ? 1 : 0
 
-  app_name            = var.app_name
-  common_tags         = var.common_tags
-  location            = var.location
-  resource_group_name = azurerm_resource_group.main.name
-  subnet_id           = module.network.jumpbox_subnet_id
-  enable_entra_login  = var.enable_entra_login
-  depends_on          = [module.network]
+  app_name                  = var.app_name
+  common_tags               = var.common_tags
+  location                  = var.location
+  resource_group_name       = azurerm_resource_group.main.name
+  subnet_id                 = module.network.jumpbox_subnet_id
+  enable_entra_login        = var.enable_entra_login
+  enable_bastion            = var.enable_bastion
+  enable_bastion_automation = var.enable_bastion_automation
+  bastion_subnet_id         = module.network.bastion_subnet_id
+  bastion_sku               = "Standard"
+  bastion_tunneling_enabled = true
+  depends_on                = [module.network]
 }
 
