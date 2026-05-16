@@ -403,13 +403,13 @@ Write-Host ''
 # ── Build az argument array ───────────────────────────────────────────────────
 #
 # Arguments after '--' are passed directly to the underlying SSH client:
-#   -D  SOCKS5 dynamic port forwarding on the chosen local port
+#   -D  SOCKS5 dynamic port forwarding on the chosen local IPv4 loopback port
 #   -N  do not execute a remote command (keep connection open for forwarding)
 #   -q  quiet mode (suppress banners and warnings)
 #   StrictHostKeyChecking=no   Bastion already provides mutual auth
 #   ServerAliveInterval/Count  keep the tunnel alive through idle periods
 
-$sshOptsStr = "-D $socksPort -N -q -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -o ServerAliveCountMax=3"
+$sshOptsStr = "-D 127.0.0.1:$socksPort -N -q -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -o ServerAliveCountMax=3"
 
 $azCmdLine = "network bastion ssh --name `"$BastionName`" --resource-group `"$ResourceGroup`" --target-resource-id `"$vmId`" --auth-type AAD -- $sshOptsStr"
 

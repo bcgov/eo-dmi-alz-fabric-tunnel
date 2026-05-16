@@ -410,14 +410,14 @@ echo ""
 
 # ── SSH options passed through to the underlying SSH process ──────────────────
 #
-# -D  SOCKS5 dynamic port forwarding on the chosen local port
+# -D  SOCKS5 dynamic port forwarding on the chosen local IPv4 loopback port
 # -N  do not execute a remote command (keep connection open for forwarding)
 # -q  quiet mode (suppress banners and warnings)
 # StrictHostKeyChecking=no   acceptable here: Bastion already provides mutual
 #                            auth; the VM has no public surface to MITM
 # ServerAliveInterval/Count  keep the tunnel alive through idle periods
 
-SSH_OPTS="-D ${SOCKS_PORT} -N -q \
+SSH_OPTS="-D 127.0.0.1:${SOCKS_PORT} -N -q \
   -o StrictHostKeyChecking=no \
   -o ServerAliveInterval=30 \
   -o ServerAliveCountMax=3"
