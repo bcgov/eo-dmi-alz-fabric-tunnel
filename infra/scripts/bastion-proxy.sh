@@ -482,7 +482,10 @@ trap cleanup EXIT
 # Start the session expiry timer in the background before the tunnel blocks.
 _session_timer "$EXPIRE_EPOCH" "$$" &
 TIMER_PID=$!
-az network bastion ssh \
+# Git Bash/MSYS rewrites arguments that look like Unix paths when calling
+# Windows executables. Azure resource IDs begin with /subscriptions/... and
+# must be passed through unchanged.
+MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' az network bastion ssh \
   --name "$BASTION_NAME" \
   --resource-group "$RESOURCE_GROUP" \
   --target-resource-id "$VM_ID" \

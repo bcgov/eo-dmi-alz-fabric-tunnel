@@ -72,10 +72,12 @@ function Invoke-AzProbe {
     )
 
     $nativeErrorPreference = Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue
+    $previousErrorActionPreference = $ErrorActionPreference
     if ($nativeErrorPreference) {
         $previousNativeErrorPreference = $nativeErrorPreference.Value
         $script:PSNativeCommandUseErrorActionPreference = $false
     }
+    $script:ErrorActionPreference = 'Continue'
 
     try {
         $output = & $Command 2>$null
@@ -85,6 +87,7 @@ function Invoke-AzProbe {
         }
     }
     finally {
+        $script:ErrorActionPreference = $previousErrorActionPreference
         if ($nativeErrorPreference) {
             $script:PSNativeCommandUseErrorActionPreference = $previousNativeErrorPreference
         }
@@ -112,24 +115,31 @@ function Install-AzExtensionIfMissing {
         [string]$ExtensionName
     )
 
-    $extensionProbe = Invoke-AzProbe -Command { az extension show --name $ExtensionName }
-    if ($extensionProbe.ExitCode -eq 0) {
+    $extensionProbe = Get-AzProbeText -Command {
+        az extension list --only-show-errors --query "[?name=='$ExtensionName'].name | [0]" --output tsv
+    }
+    if ($extensionProbe.ExitCode -eq 0 -and $extensionProbe.Output -eq $ExtensionName) {
         return
     }
 
     Write-Info "Installing Azure CLI '$ExtensionName' extension..."
     az extension add --name $ExtensionName --yes --only-show-errors 2>&1 | Out-Null
 
-    $extensionProbe = Invoke-AzProbe -Command { az extension show --name $ExtensionName }
-    if ($extensionProbe.ExitCode -ne 0) {
+    $extensionProbe = Get-AzProbeText -Command {
+        az extension list --only-show-errors --query "[?name=='$ExtensionName'].name | [0]" --output tsv
+    }
+    if ($extensionProbe.ExitCode -ne 0 -or $extensionProbe.Output -ne $ExtensionName) {
         Write-Err "Azure CLI '$ExtensionName' extension could not be installed."
         exit 1
     }
 }
 
 function Test-AzLogin {
-    $loginProbe = Invoke-AzProbe -Command { az account show }
-    return ($loginProbe.ExitCode -eq 0)
+    $loginProbe = Get-AzProbeText -Command {
+        az account list --only-show-errors --query "[?isDefault].id | [0]" --output tsv
+    }
+
+    return ($loginProbe.ExitCode -eq 0 -and -not [string]::IsNullOrWhiteSpace($loginProbe.Output))
 }
 
 function Get-ProxyBrowser {

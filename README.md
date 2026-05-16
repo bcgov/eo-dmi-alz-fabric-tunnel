@@ -142,7 +142,7 @@ Copy-paste one-liners from `main`:
 PowerShell:
 
 ```powershell
-$scriptPath = Join-Path $env:TEMP 'bastion-proxy.ps1'; Invoke-WebRequest 'https://raw.githubusercontent.com/bcgov/eo-dmi-alz-fabric-tunnel/main/infra/scripts/bastion-proxy.ps1' -OutFile $scriptPath; & $scriptPath -ResourceGroup eo-dmi-alz-fabric-tunnel-tools -BastionName eo-dmi-alz-fabric-tunnel-bastion -VmName eo-dmi-alz-fabric-tunnel-jumpbox
+$scriptPath = Join-Path $env:TEMP 'bastion-proxy.ps1'; Invoke-WebRequest 'https://raw.githubusercontent.com/bcgov/eo-dmi-alz-fabric-tunnel/main/infra/scripts/bastion-proxy.ps1' -OutFile $scriptPath; Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force; & $scriptPath -ResourceGroup eo-dmi-alz-fabric-tunnel-tools -BastionName eo-dmi-alz-fabric-tunnel-bastion -VmName eo-dmi-alz-fabric-tunnel-jumpbox
 ```
 
 Bash:
@@ -158,12 +158,15 @@ $repoRef = 'main'
 $scriptUrl = "https://raw.githubusercontent.com/bcgov/eo-dmi-alz-fabric-tunnel/$repoRef/infra/scripts/bastion-proxy.ps1"
 $scriptPath = Join-Path $env:TEMP 'bastion-proxy.ps1'
 Invoke-WebRequest -Uri $scriptUrl -OutFile $scriptPath
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
 
 & $scriptPath `
   -ResourceGroup eo-dmi-alz-fabric-tunnel-tools `
   -BastionName eo-dmi-alz-fabric-tunnel-bastion `
   -VmName eo-dmi-alz-fabric-tunnel-jumpbox
 ```
+
+The PowerShell examples above set `ExecutionPolicy` to `Bypass` for the current process only. They do not change the machine-wide policy.
 
 Bash from raw GitHub URL:
 
