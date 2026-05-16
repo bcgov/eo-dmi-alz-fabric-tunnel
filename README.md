@@ -246,14 +246,16 @@ Schedule details:
 
 The workflow in `.github/workflows/deploy-terraform.yml` deploys the infrastructure through GitHub Actions OIDC. That deployment path is non-interactive and separate from developer browser access.
 
+This Bastion-based access pattern aligns with the BC Gov Platform team guidance for Azure Landing Zone environments. See the [Azure Bastion guidance](https://developer.gov.bc.ca/docs/default/component/public-cloud-techdocs/azure/tools/bastion/) for the broader platform recommendation and operational considerations.
+
 ```mermaid
 flowchart LR
-    gha[GitHub Actions workflow_dispatch]
-    oidc[GitHub OIDC token]
-    azureLogin[azure/login@v2]
-    terraform[Terraform apply]
-    rg[Azure resource group]
-    resources[Bastion + jumpbox + automation]
+  gha["GitHub Actions workflow_dispatch"]
+  oidc["GitHub OIDC token"]
+  azureLogin["azure/login@v2"]
+  terraform["Terraform apply"]
+  rg["Azure resource group"]
+  resources["Bastion + jumpbox + automation"]
 
     gha --> oidc --> azureLogin --> terraform --> rg --> resources
 ```
