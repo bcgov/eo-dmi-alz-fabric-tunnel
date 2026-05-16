@@ -6,6 +6,9 @@ on:
         description: "Deployment environment, mostly it is single deployment to tools"
         required: true
         default: "tools"
+permissions:
+  id-token: write # Required for OIDC authentication
+  contents: read
 jobs:
   deploy:
     runs-on: ubuntu-24.04
