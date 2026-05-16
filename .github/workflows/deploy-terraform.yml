@@ -1,0 +1,58 @@
+name: Deploy VM and Bastion Host
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Deployment environment, mostly it is single deployment to tools"
+        required: true
+        default: "tools"
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    environment: ${{ inputs.environment }}
+    name: Deploy to ${{ inputs.environment }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Azure CLI Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+      - name: Make deploy script executable
+        shell: bash
+        run: chmod +x ./infra/deploy-terraform.sh
+      - name: Apply Terraform configuration
+        id: deploy
+        shell: bash
+        working-directory: ./infra
+        env:
+          CI: "true"
+          ARM_USE_OIDC: "true"
+          # Backend configuration for Terraform state
+          BACKEND_RESOURCE_GROUP: ${{ secrets.VNET_RESOURCE_GROUP_NAME }}
+          BACKEND_STORAGE_ACCOUNT: ${{ vars.STORAGE_ACCOUNT_NAME }}
+          TF_VAR_app_name: "eo-dmi-alz-fabric-tunnel"
+          TF_VAR_app_env: ${{ inputs.environment }}
+          TF_VAR_location: "Canada Central"
+          TF_VAR_resource_group_name: "eo-dmi-alz-fabric-tunnel-${{ inputs.environment }}"
+          TF_VAR_common_tags: >-
+            {"environment":"${{ inputs.environment }}","app_env":"${{ inputs.environment }}","repo_name":"${{ github.event.repository.name }}"}
+          # Sensitive variables from secrets
+          TF_VAR_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          TF_VAR_client_id: ${{ secrets.AZURE_CLIENT_ID }}
+          TF_VAR_tenant_id: ${{ secrets.AZURE_TENANT_ID }}
+          TF_VAR_vnet_name: ${{ secrets.VNET_NAME }}
+          TF_VAR_vnet_resource_group_name: ${{ secrets.VNET_RESOURCE_GROUP_NAME }}
+          TF_VAR_vnet_address_space: ${{ secrets.VNET_ADDRESS_SPACE }}
+        run: |
+          set -euo pipefail
+          ./deploy-terraform.sh apply -auto-approve
