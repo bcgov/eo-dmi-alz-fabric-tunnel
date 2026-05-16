@@ -92,7 +92,7 @@ For the `b9cee3` tools environment, make this a manual VM step for:
 - `DO_PuC_Azure_Live_b9cee3_Owners`
 - `DO_PuC_Azure_Live_b9cee3_Contributors`
 
-Install extensions once:
+The proxy scripts will install missing Azure CLI `bastion` and `ssh` extensions automatically on first run. If you prefer to install them yourself ahead of time:
 
 ```powershell
 az extension add --name bastion
@@ -135,13 +135,60 @@ Bash:
   --vm-name eo-dmi-alz-fabric-tunnel-jumpbox
 ```
 
+If you do not want to clone this repository locally, you can download either script directly from the repo's raw GitHub URL and run it from a temporary file.
+
+Copy-paste one-liners from `main`:
+
+PowerShell:
+
+```powershell
+$scriptPath = Join-Path $env:TEMP 'bastion-proxy.ps1'; Invoke-WebRequest 'https://raw.githubusercontent.com/bcgov/eo-dmi-alz-fabric-tunnel/main/infra/scripts/bastion-proxy.ps1' -OutFile $scriptPath; & $scriptPath -ResourceGroup eo-dmi-alz-fabric-tunnel-tools -BastionName eo-dmi-alz-fabric-tunnel-bastion -VmName eo-dmi-alz-fabric-tunnel-jumpbox
+```
+
+Bash:
+
+```bash
+script_path="$(mktemp /tmp/bastion-proxy.XXXXXX.sh)" && curl -fsSL "https://raw.githubusercontent.com/bcgov/eo-dmi-alz-fabric-tunnel/main/infra/scripts/bastion-proxy.sh" -o "$script_path" && chmod +x "$script_path" && "$script_path" --resource-group eo-dmi-alz-fabric-tunnel-tools --bastion-name eo-dmi-alz-fabric-tunnel-bastion --vm-name eo-dmi-alz-fabric-tunnel-jumpbox
+```
+
+PowerShell from raw GitHub URL:
+
+```powershell
+$repoRef = 'main'
+$scriptUrl = "https://raw.githubusercontent.com/bcgov/eo-dmi-alz-fabric-tunnel/$repoRef/infra/scripts/bastion-proxy.ps1"
+$scriptPath = Join-Path $env:TEMP 'bastion-proxy.ps1'
+Invoke-WebRequest -Uri $scriptUrl -OutFile $scriptPath
+
+& $scriptPath `
+  -ResourceGroup eo-dmi-alz-fabric-tunnel-tools `
+  -BastionName eo-dmi-alz-fabric-tunnel-bastion `
+  -VmName eo-dmi-alz-fabric-tunnel-jumpbox
+```
+
+Bash from raw GitHub URL:
+
+```bash
+repo_ref=main
+script_url="https://raw.githubusercontent.com/bcgov/eo-dmi-alz-fabric-tunnel/${repo_ref}/infra/scripts/bastion-proxy.sh"
+script_path="$(mktemp /tmp/bastion-proxy.XXXXXX.sh)"
+curl -fsSL "$script_url" -o "$script_path"
+chmod +x "$script_path"
+
+"$script_path" \
+  --resource-group eo-dmi-alz-fabric-tunnel-tools \
+  --bastion-name eo-dmi-alz-fabric-tunnel-bastion \
+  --vm-name eo-dmi-alz-fabric-tunnel-jumpbox
+```
+
+Replace `main` with a tag or commit SHA if you want to pin the exact script version instead of following the default branch.
+
 If your current Azure CLI context points to the wrong subscription, run `az account set --subscription <subscription-id>` first or pass `-s/--subscription` to the proxy script.
 
 Before running the proxy, make sure the Entra user you signed in with, or one of their Entra groups, has a manual `Virtual Machine Administrator Login` assignment on the Linux jumpbox VM.
 
 What the script does:
 
-1. Verifies Azure CLI and required extensions.
+1. Verifies Azure CLI and installs missing `bastion` and `ssh` extensions when needed.
 2. Uses browser-based `az login` if no Azure CLI session exists.
 3. Sets the target subscription.
 4. Resolves the jumpbox VM resource ID.

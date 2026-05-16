@@ -65,6 +65,73 @@ function Write-Ok { param([string]$Msg) Write-Host "[ OK ]  $Msg" -ForegroundCol
 function Write-Warn { param([string]$Msg) Write-Host "[WARN]  $Msg" -ForegroundColor Yellow }
 function Write-Err { param([string]$Msg) Write-Host "[ERROR] $Msg" -ForegroundColor Red }
 
+function Invoke-AzProbe {
+    param(
+        [Parameter(Mandatory)]
+        [scriptblock]$Command
+    )
+
+    $nativeErrorPreference = Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue
+    if ($nativeErrorPreference) {
+        $previousNativeErrorPreference = $nativeErrorPreference.Value
+        $script:PSNativeCommandUseErrorActionPreference = $false
+    }
+
+    try {
+        $output = & $Command 2>$null
+        return [pscustomobject]@{
+            Output   = @($output)
+            ExitCode = $LASTEXITCODE
+        }
+    }
+    finally {
+        if ($nativeErrorPreference) {
+            $script:PSNativeCommandUseErrorActionPreference = $previousNativeErrorPreference
+        }
+    }
+}
+
+function Get-AzProbeText {
+    param(
+        [Parameter(Mandatory)]
+        [scriptblock]$Command
+    )
+
+    $result = Invoke-AzProbe -Command $Command
+    $text = ($result.Output | Where-Object { $null -ne $_ } | ForEach-Object { $_.ToString().TrimEnd() }) -join [Environment]::NewLine
+
+    return [pscustomobject]@{
+        Output   = $text.Trim()
+        ExitCode = $result.ExitCode
+    }
+}
+
+function Install-AzExtensionIfMissing {
+    param(
+        [Parameter(Mandatory)]
+        [string]$ExtensionName
+    )
+
+    $extensionProbe = Invoke-AzProbe -Command { az extension show --name $ExtensionName }
+    if ($extensionProbe.ExitCode -eq 0) {
+        return
+    }
+
+    Write-Info "Installing Azure CLI '$ExtensionName' extension..."
+    az extension add --name $ExtensionName --yes --only-show-errors 2>&1 | Out-Null
+
+    $extensionProbe = Invoke-AzProbe -Command { az extension show --name $ExtensionName }
+    if ($extensionProbe.ExitCode -ne 0) {
+        Write-Err "Azure CLI '$ExtensionName' extension could not be installed."
+        exit 1
+    }
+}
+
+function Test-AzLogin {
+    $loginProbe = Invoke-AzProbe -Command { az account show }
+    return ($loginProbe.ExitCode -eq 0)
+}
+
 function Get-ProxyBrowser {
     $candidates = @(
         @{
@@ -158,33 +225,22 @@ if (-not $env:AZURE_EXTENSION_DIR) {
 }
 New-Item -ItemType Directory -Force -Path $env:AZURE_EXTENSION_DIR | Out-Null
 
-$null = az extension show --name bastion 2>$null
-if ($LASTEXITCODE -ne 0) {
-    Write-Info "Installing Azure CLI 'bastion' extension..."
-    az extension add --name bastion --yes 2>&1 | Out-Null
-}
-
-$null = az extension show --name ssh 2>$null
-if ($LASTEXITCODE -ne 0) {
-    Write-Info "Installing Azure CLI 'ssh' extension..."
-    az extension add --name ssh --yes 2>&1 | Out-Null
-}
+Install-AzExtensionIfMissing -ExtensionName 'bastion'
+Install-AzExtensionIfMissing -ExtensionName 'ssh'
 
 Write-Ok 'Prerequisites satisfied'
 
 # ── Authentication ────────────────────────────────────────────────────────────
 
 Write-Info 'Checking Azure CLI login status...'
-$null = az account show 2>$null
-if ($LASTEXITCODE -ne 0) {
+if (-not (Test-AzLogin)) {
     Write-Host ''
     Write-Info 'Not logged in. Starting Entra browser authentication...'
     Write-Host ''
     Write-Warn 'Complete the MFA prompt in the browser window opened by Azure CLI.'
     Write-Host ''
     az login
-    $null = az account show 2>$null
-    if ($LASTEXITCODE -ne 0) {
+    if (-not (Test-AzLogin)) {
         Write-Err 'Azure CLI login did not complete successfully.'
         exit 1
     }
@@ -217,8 +273,9 @@ Write-Ok "Using: $subName ($SubscriptionId)"
 # ── Resolve VM resource ID ────────────────────────────────────────────────────
 
 Write-Info "Resolving VM '$VmName' in resource group '$ResourceGroup'..."
-$vmId = az vm show --name $VmName --resource-group $ResourceGroup --query id --output tsv 2>$null
-if ($LASTEXITCODE -ne 0 -or -not $vmId) {
+$vmLookup = Get-AzProbeText -Command { az vm show --name $VmName --resource-group $ResourceGroup --query id --output tsv }
+$vmId = $vmLookup.Output
+if ($vmLookup.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($vmId)) {
     Write-Err "VM '$VmName' not found in resource group '$ResourceGroup'"
     exit 1
 }
@@ -226,11 +283,18 @@ Write-Ok 'VM found'
 
 # ── VM running check ──────────────────────────────────────────────────────────
 
-$vmState = az vm get-instance-view `
-    --name $VmName `
-    --resource-group $ResourceGroup `
-    --query "instanceView.statuses[?contains(code,'PowerState')].displayStatus | [0]" `
-    --output tsv 2>$null
+$vmStateLookup = Get-AzProbeText -Command {
+    az vm get-instance-view `
+        --name $VmName `
+        --resource-group $ResourceGroup `
+        --query "instanceView.statuses[?contains(code,'PowerState')].displayStatus | [0]" `
+        --output tsv
+}
+$vmState = $vmStateLookup.Output
+if ($vmStateLookup.ExitCode -ne 0) {
+    Write-Err "Failed to query VM power state for '$VmName'"
+    exit 1
+}
 
 if ($vmState -ne 'VM running') {
     if ([string]::IsNullOrWhiteSpace($vmState)) {
@@ -258,13 +322,16 @@ if ($vmState -ne 'VM running') {
 # ── Bastion health check ──────────────────────────────────────────────────────
 
 Write-Info "Checking Bastion host '$BastionName'..."
-$bastionState = az network bastion show `
-    --name $BastionName `
-    --resource-group $ResourceGroup `
-    --query provisioningState `
-    --output tsv 2>$null
+$bastionLookup = Get-AzProbeText -Command {
+    az network bastion show `
+        --name $BastionName `
+        --resource-group $ResourceGroup `
+        --query provisioningState `
+        --output tsv
+}
+$bastionState = $bastionLookup.Output
 
-if ($LASTEXITCODE -ne 0 -or -not $bastionState) {
+if ($bastionLookup.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($bastionState)) {
     Write-Err "Bastion '$BastionName' not found in resource group '$ResourceGroup'"
     exit 1
 }
@@ -277,7 +344,14 @@ switch ($bastionState) {
         Write-Info "Bastion is provisioning (state: $bastionState). Waiting..."
         while ($true) {
             Start-Sleep -Seconds 15
-            $bastionState = az network bastion show --name $BastionName --resource-group $ResourceGroup --query provisioningState --output tsv 2>$null
+            $bastionLookup = Get-AzProbeText -Command {
+                az network bastion show --name $BastionName --resource-group $ResourceGroup --query provisioningState --output tsv
+            }
+            $bastionState = $bastionLookup.Output
+            if ($bastionLookup.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($bastionState)) {
+                Write-Err 'Failed to query Bastion provisioning state while waiting.'
+                exit 1
+            }
             if ($bastionState -eq 'Succeeded') { Write-Ok 'Bastion is ready'; break }
             if ($bastionState -eq 'Failed') {
                 Write-Err 'Bastion provisioning failed. Check the Azure portal.'

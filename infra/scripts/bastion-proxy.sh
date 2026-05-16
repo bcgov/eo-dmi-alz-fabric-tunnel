@@ -74,6 +74,7 @@ err()  { echo -e "${RED}[ERROR]${RESET} $*" >&2; }
 info() { echo -e "${CYAN}[INFO]${RESET}  $*"; }
 ok()   { echo -e "${GREEN}[ OK ]${RESET}  $*"; }
 warn() { echo -e "${YELLOW}[WARN]${RESET}  $*"; }
+trim_cr() { tr -d '\r'; }
 
 launch_proxy_browser() {
   local port=$1
@@ -297,10 +298,10 @@ if [[ -n "$SUBSCRIPTION_ID" ]]; then
   info "Switching to subscription ${SUBSCRIPTION_ID}..."
   az account set --subscription "$SUBSCRIPTION_ID"
 else
-  SUBSCRIPTION_ID=$(az account show --query id --output tsv)
+  SUBSCRIPTION_ID=$(az account show --query id --output tsv | trim_cr)
   info "Using current Azure subscription..."
 fi
-SUBSCRIPTION_NAME=$(az account show --query name --output tsv)
+SUBSCRIPTION_NAME=$(az account show --query name --output tsv | trim_cr)
 ok "Using: ${SUBSCRIPTION_NAME} (${SUBSCRIPTION_ID})"
 
 # ── Resolve VM resource ID ────────────────────────────────────────────────────
@@ -310,7 +311,7 @@ VM_ID=$(az vm show \
   --name "$VM_NAME" \
   --resource-group "$RESOURCE_GROUP" \
   --query id \
-  --output tsv 2>/dev/null) || {
+  --output tsv 2>/dev/null | trim_cr) || {
   err "VM '${VM_NAME}' not found in resource group '${RESOURCE_GROUP}'"
   exit 1
 }
@@ -322,7 +323,7 @@ VM_STATE=$(az vm get-instance-view \
   --name "$VM_NAME" \
   --resource-group "$RESOURCE_GROUP" \
   --query "instanceView.statuses[?contains(code,'PowerState')].displayStatus | [0]" \
-  --output tsv 2>/dev/null || echo "unknown")
+  --output tsv 2>/dev/null | trim_cr || echo "unknown")
 
 if [[ "$VM_STATE" != "VM running" ]]; then
   warn "VM is not running (current state: ${VM_STATE:-unknown})"
@@ -349,7 +350,7 @@ BASTION_STATE=$(az network bastion show \
   --name "$BASTION_NAME" \
   --resource-group "$RESOURCE_GROUP" \
   --query "provisioningState" \
-  --output tsv 2>/dev/null || echo "NotFound")
+  --output tsv 2>/dev/null | trim_cr || echo "NotFound")
 
 case "$BASTION_STATE" in
   Succeeded)
@@ -363,7 +364,7 @@ case "$BASTION_STATE" in
         --name "$BASTION_NAME" \
         --resource-group "$RESOURCE_GROUP" \
         --query "provisioningState" \
-        --output tsv 2>/dev/null)
+        --output tsv 2>/dev/null | trim_cr)
       [[ "$BASTION_STATE" == "Succeeded" ]] && break
       if [[ "$BASTION_STATE" == "Failed" ]]; then
         err "Bastion provisioning failed. Check the Azure portal."
