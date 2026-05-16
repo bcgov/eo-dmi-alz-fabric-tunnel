@@ -57,15 +57,3 @@ variable "enable_entra_login" {
   type        = bool
   default     = true
 }
-
-variable "vm_admin_login_group_display_names" {
-  description = "List of Entra group display names to grant Virtual Machine Administrator Login on the Linux jumpbox VM for interactive Entra SSH access"
-  type        = list(string)
-  default     = []
-}
-
-variable "vm_admin_login_principal_ids" {
-  description = "List of Entra group or user object IDs to grant Virtual Machine Administrator Login on the Linux jumpbox VM for interactive Entra SSH access"
-  type        = list(string)
-  default     = []
-}

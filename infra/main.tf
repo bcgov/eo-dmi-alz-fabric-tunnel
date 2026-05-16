@@ -60,8 +60,6 @@ module "jumpbox" {
   resource_group_name                = azurerm_resource_group.main.name
   subnet_id                          = module.network.jumpbox_subnet_id
   enable_entra_login                 = var.enable_entra_login
-  vm_admin_login_group_display_names = var.vm_admin_login_group_display_names
-  vm_admin_login_principal_ids       = var.vm_admin_login_principal_ids
   depends_on                         = [module.network]
 }
 

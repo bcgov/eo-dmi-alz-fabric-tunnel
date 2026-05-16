@@ -19,12 +19,13 @@
 #   ssh extension:     az extension add --name ssh   (AAD auth only)
 #   Standard SKU Azure Bastion with native tunnelling enabled
 #   The signing-in Entra user, or a group they belong to, must have
-#   "Virtual Machine Administrator Login" on the Linux jumpbox VM (AAD auth)
+#   a manual "Virtual Machine Administrator Login" assignment on the
+#   Linux jumpbox VM (AAD auth)
 #
 # AUTHENTICATION
 #   Uses normal Azure CLI Entra browser login with MFA.
 #   Entra login alone is not enough; the authenticated user must also be
-#   authorized on the Linux VM through the VM login RBAC assignment.
+#   authorized on the Linux VM through a manual VM login RBAC assignment.
 #
 # USAGE
 #   ./scripts/bastion-proxy.sh -g <resource-group> -b <bastion-name> -v <vm-name>

@@ -48,7 +48,7 @@ This module deploys a minimal Azure Linux VM used as an Azure Bastion native-cli
 - **Ubuntu 24.04 LTS**: Latest LTS release (Noble Numbat) with long-term support until 2034
 - **Minimal VM**: No desktop environment or DevOps tool installation; the VM exists only as a tunnel endpoint
 - **Azure Bastion**: Secure SSH access without public IP on VM (Standard SKU with native CLI tunneling)
-- **Entra ID SSH Login**: Microsoft Entra ID (AAD) authentication via `AADSSHLoginForLinux` VM extension; developer access uses Entra ID rather than SSH key sign-in, but the signing-in user or one of their groups must also have `Virtual Machine Administrator Login` on the Linux jumpbox VM
+- **Entra ID SSH Login**: Microsoft Entra ID (AAD) authentication via `AADSSHLoginForLinux` VM extension; developer access uses Entra ID rather than SSH key sign-in, but the signing-in user or one of their groups must also have a manual `Virtual Machine Administrator Login` assignment on the Linux jumpbox VM
 - **Managed Identity**: Access Azure services without storing credentials
 - **Random Admin Username**: 12-char alphanumeric username for added security
 - **Auto-Shutdown**: VM automatically shuts down at 7 PM PST daily
@@ -89,7 +89,7 @@ Or via Azure Portal:
 
 ### Via Azure CLI with Entra ID (Recommended)
 
-When Entra ID login is enabled (`enable_entra_login = true`), you can SSH using your Entra identity without any SSH keys, as long as the signing-in Entra user or one of their groups has `Virtual Machine Administrator Login` on the Linux jumpbox VM:
+When Entra ID login is enabled (`enable_entra_login = true`), you can SSH using your Entra identity without any SSH keys, as long as the signing-in Entra user or one of their groups has a manual `Virtual Machine Administrator Login` assignment on the Linux jumpbox VM:
 
 ```bash
 # Login to Azure CLI
@@ -112,9 +112,14 @@ az network bastion tunnel \
 # Then in another terminal: ssh -p 2222 localhost
 ```
 
-> **Prerequisites**: Requires Azure CLI with the `bastion` extension (`az extension add --name bastion`). The specific Entra user you sign in with, or a group they belong to, must be in the `vm_admin_login_principal_ids` list so the Linux jumpbox VM grants `Virtual Machine Administrator Login`.
+> **Prerequisites**: Requires Azure CLI with the `bastion` extension (`az extension add --name bastion`). The specific Entra user you sign in with, or a group they belong to, must be granted `Virtual Machine Administrator Login` manually on the Linux jumpbox VM.
 
 If this RBAC assignment is missing, the Bastion connection can reach the VM but Entra SSH authentication will fail, typically with `Permission denied (publickey)`.
+
+For the `b9cee3` tools environment, make this a manual VM step for:
+
+- `DO_PuC_Azure_Live_b9cee3_Owners`
+- `DO_PuC_Azure_Live_b9cee3_Contributors`
 
 Terraform creates a bootstrap SSH key internally because Azure requires an `admin_ssh_key` for Linux VM creation when password authentication is disabled. There is no local key file, but the private key is retained in Terraform state and exposed as a sensitive output for break-glass recovery. Interactive access is still expected to use Entra ID through Azure Bastion.
 
@@ -152,7 +157,7 @@ tunnel configuration is needed.
 > **Important: use Entra browser login with MFA**
 >
 > Sign in with `az login` and complete the MFA prompt in the browser window
-> opened by Azure CLI. The Entra user you sign in with, or one of their groups, must also have `Virtual Machine Administrator Login` on the Linux jumpbox VM.
+> opened by Azure CLI. The Entra user you sign in with, or one of their groups, must also have a manual `Virtual Machine Administrator Login` assignment on the Linux jumpbox VM.
 
 ```bash
 # Prerequisites (one-time setup)
@@ -177,7 +182,7 @@ The script will:
 6. Open the Bastion tunnel and print the proxy address with session expiry time
 7. Block until `Ctrl+C` — warns 1 hour before the 12h Entra ID session limit and stops automatically at expiry
 
-If the SOCKS proxy never comes up and the underlying SSH call reports an Entra authentication failure, verify that the actual user account you authenticated with has `Virtual Machine Administrator Login` on the Linux jumpbox VM.
+If the SOCKS proxy never comes up and the underlying SSH call reports an Entra authentication failure, verify that the actual user account you authenticated with has a manual `Virtual Machine Administrator Login` assignment on the Linux jumpbox VM.
 
 ### Configuring Tools to Use the Proxy
 
@@ -307,7 +312,7 @@ This does not add SSH keys or alternative VM login methods. It only grants the A
 - **No Public IP**: The Jumpbox VM has no public IP address
 - **Random Admin Username**: 12-character alphanumeric username generated at deployment (security by obscurity)
 - **Entra ID SSH Authentication**: Password authentication disabled; Terraform uses an internal bootstrap SSH key only to satisfy Linux VM creation, while interactive access uses Entra ID RBAC
-- **Entra ID RBAC**: When enabled, `Virtual Machine Administrator Login` is scoped to the Linux jumpbox VM for authorized users or groups, and the actual signing-in user must be covered by that assignment
+- **Entra ID RBAC**: `Virtual Machine Administrator Login` must be associated manually on the Linux jumpbox VM for authorized users or groups, and the actual signing-in user must be covered by that assignment
 - **NSG Rules**: Only SSH (22) from Bastion subnet is allowed inbound
 - **Private Subnet**: Default outbound access is disabled
 - **Managed Identity**: VM can access Azure services without credentials
@@ -318,7 +323,7 @@ This does not add SSH keys or alternative VM login methods. It only grants the A
 
 1. Ensure NSG rules allow traffic between Bastion and VM subnets
 2. Check that the VM is in "Running" state
-3. Verify the signing-in Entra user, or one of their groups, has `Virtual Machine Administrator Login` on the Linux jumpbox VM
+3. Verify the signing-in Entra user, or one of their groups, has a manual `Virtual Machine Administrator Login` assignment on the Linux jumpbox VM
 4. Verify the username is correct
 
 ### VM Not Starting
