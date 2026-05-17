@@ -42,29 +42,52 @@ module "bastion" {
   source = "./modules/bastion"
   count  = var.enable_bastion ? 1 : 0
 
-  app_name            = var.app_name
-  common_tags         = var.common_tags
-  location            = var.location
-  resource_group_name = azurerm_resource_group.main.name
-  bastion_subnet_id   = module.network.bastion_subnet_id
-  bastion_sku         = "Standard"
+  app_name                          = var.app_name
+  common_tags                       = var.common_tags
+  location                          = var.location
+  resource_group_name               = azurerm_resource_group.main.name
+  bastion_subnet_id                 = module.network.bastion_subnet_id
+  bastion_sku                       = var.bastion_sku
+  tunneling_enabled                 = var.bastion_tunneling_enabled
+  copy_paste_enabled                = var.bastion_copy_paste_enabled
+  file_copy_enabled                 = var.bastion_file_copy_enabled
+  ip_connect_enabled                = var.bastion_ip_connect_enabled
+  shareable_link_enabled            = var.bastion_shareable_link_enabled
+  scale_units                       = var.bastion_scale_units
+  public_ip_sku                     = var.bastion_public_ip_sku
+  public_ip_sku_tier                = var.bastion_public_ip_sku_tier
+  public_ip_allocation_method       = var.bastion_public_ip_allocation_method
+  public_ip_version                 = var.bastion_public_ip_version
+  public_ip_idle_timeout_in_minutes = var.bastion_public_ip_idle_timeout_in_minutes
+  public_ip_ddos_protection_mode    = var.bastion_public_ip_ddos_protection_mode
 
 }
 module "jumpbox" {
   source = "./modules/jumpbox"
   count  = var.enable_jumpbox ? 1 : 0
 
-  app_name                  = var.app_name
-  common_tags               = var.common_tags
-  location                  = var.location
-  resource_group_name       = azurerm_resource_group.main.name
-  subnet_id                 = module.network.jumpbox_subnet_id
-  enable_entra_login        = var.enable_entra_login
-  enable_bastion            = var.enable_bastion
-  enable_bastion_automation = var.enable_bastion_automation
-  bastion_subnet_id         = module.network.bastion_subnet_id
-  bastion_sku               = "Standard"
-  bastion_tunneling_enabled = true
-  depends_on                = [module.network]
+  app_name                                  = var.app_name
+  common_tags                               = var.common_tags
+  location                                  = var.location
+  resource_group_name                       = azurerm_resource_group.main.name
+  subnet_id                                 = module.network.jumpbox_subnet_id
+  enable_entra_login                        = var.enable_entra_login
+  enable_bastion                            = var.enable_bastion
+  enable_bastion_automation                 = var.enable_bastion_automation
+  bastion_subnet_id                         = module.network.bastion_subnet_id
+  bastion_sku                               = var.bastion_sku
+  bastion_tunneling_enabled                 = var.bastion_tunneling_enabled
+  bastion_copy_paste_enabled                = var.bastion_copy_paste_enabled
+  bastion_file_copy_enabled                 = var.bastion_file_copy_enabled
+  bastion_ip_connect_enabled                = var.bastion_ip_connect_enabled
+  bastion_shareable_link_enabled            = var.bastion_shareable_link_enabled
+  bastion_scale_units                       = var.bastion_scale_units
+  bastion_public_ip_sku                     = var.bastion_public_ip_sku
+  bastion_public_ip_sku_tier                = var.bastion_public_ip_sku_tier
+  bastion_public_ip_allocation_method       = var.bastion_public_ip_allocation_method
+  bastion_public_ip_version                 = var.bastion_public_ip_version
+  bastion_public_ip_idle_timeout_in_minutes = var.bastion_public_ip_idle_timeout_in_minutes
+  bastion_public_ip_ddos_protection_mode    = var.bastion_public_ip_ddos_protection_mode
+  depends_on                                = [module.network]
 }
 

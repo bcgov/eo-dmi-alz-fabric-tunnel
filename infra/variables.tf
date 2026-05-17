@@ -76,6 +76,84 @@ variable "enable_bastion_automation" {
   default     = true
 }
 
+variable "bastion_sku" {
+  description = "SKU for Azure Bastion. Standard or Premium is required for native tunneling."
+  type        = string
+  default     = "Standard"
+}
+
+variable "bastion_tunneling_enabled" {
+  description = "Enable native client tunneling for Azure Bastion."
+  type        = bool
+  default     = true
+}
+
+variable "bastion_copy_paste_enabled" {
+  description = "Enable copy and paste in Azure Bastion sessions."
+  type        = bool
+  default     = true
+}
+
+variable "bastion_file_copy_enabled" {
+  description = "Enable file copy in Azure Bastion sessions."
+  type        = bool
+  default     = false
+}
+
+variable "bastion_ip_connect_enabled" {
+  description = "Enable Azure Bastion IP Connect."
+  type        = bool
+  default     = false
+}
+
+variable "bastion_shareable_link_enabled" {
+  description = "Enable Azure Bastion shareable links."
+  type        = bool
+  default     = false
+}
+
+variable "bastion_scale_units" {
+  description = "Scale units to configure on the Azure Bastion host."
+  type        = number
+  default     = 2
+}
+
+variable "bastion_public_ip_sku" {
+  description = "SKU for the Azure Bastion public IP."
+  type        = string
+  default     = "Standard"
+}
+
+variable "bastion_public_ip_sku_tier" {
+  description = "SKU tier for the Azure Bastion public IP."
+  type        = string
+  default     = "Regional"
+}
+
+variable "bastion_public_ip_allocation_method" {
+  description = "Allocation method for the Azure Bastion public IP."
+  type        = string
+  default     = "Static"
+}
+
+variable "bastion_public_ip_version" {
+  description = "IP version for the Azure Bastion public IP."
+  type        = string
+  default     = "IPv4"
+}
+
+variable "bastion_public_ip_idle_timeout_in_minutes" {
+  description = "Idle timeout in minutes for the Azure Bastion public IP."
+  type        = number
+  default     = 4
+}
+
+variable "bastion_public_ip_ddos_protection_mode" {
+  description = "DDoS protection mode for the Azure Bastion public IP."
+  type        = string
+  default     = "VirtualNetworkInherited"
+}
+
 variable "enable_jumpbox" {
   description = "Enable deployment of the Azure Jumpbox VM"
   type        = bool

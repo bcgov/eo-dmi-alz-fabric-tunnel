@@ -45,3 +45,5 @@ terraform.rc
 .copilot/*
 .copilot-memory/**
 **/*.lock.hcl
+**/__pycache__/**
+**/.pytest_cache/**

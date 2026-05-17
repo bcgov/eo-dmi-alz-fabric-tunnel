@@ -87,3 +87,69 @@ variable "bastion_tunneling_enabled" {
   type        = bool
   default     = true
 }
+
+variable "bastion_copy_paste_enabled" {
+  description = "Enable copy and paste when the automation runbook recreates Bastion"
+  type        = bool
+  default     = true
+}
+
+variable "bastion_file_copy_enabled" {
+  description = "Enable file copy when the automation runbook recreates Bastion"
+  type        = bool
+  default     = false
+}
+
+variable "bastion_ip_connect_enabled" {
+  description = "Enable IP Connect when the automation runbook recreates Bastion"
+  type        = bool
+  default     = false
+}
+
+variable "bastion_shareable_link_enabled" {
+  description = "Enable shareable links when the automation runbook recreates Bastion"
+  type        = bool
+  default     = false
+}
+
+variable "bastion_scale_units" {
+  description = "Scale units to configure when the automation runbook recreates Bastion"
+  type        = number
+  default     = 2
+}
+
+variable "bastion_public_ip_sku" {
+  description = "SKU for the Azure Bastion public IP created by the automation runbook"
+  type        = string
+  default     = "Standard"
+}
+
+variable "bastion_public_ip_sku_tier" {
+  description = "SKU tier for the Azure Bastion public IP created by the automation runbook"
+  type        = string
+  default     = "Regional"
+}
+
+variable "bastion_public_ip_allocation_method" {
+  description = "Allocation method for the Azure Bastion public IP created by the automation runbook"
+  type        = string
+  default     = "Static"
+}
+
+variable "bastion_public_ip_version" {
+  description = "IP version for the Azure Bastion public IP created by the automation runbook"
+  type        = string
+  default     = "IPv4"
+}
+
+variable "bastion_public_ip_idle_timeout_in_minutes" {
+  description = "Idle timeout for the Azure Bastion public IP created by the automation runbook"
+  type        = number
+  default     = 4
+}
+
+variable "bastion_public_ip_ddos_protection_mode" {
+  description = "DDoS protection mode for the Azure Bastion public IP created by the automation runbook"
+  type        = string
+  default     = "VirtualNetworkInherited"
+}

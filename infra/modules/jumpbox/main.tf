@@ -145,70 +145,11 @@ resource "azurerm_automation_runbook" "start_vm" {
   log_progress            = false
   runbook_type            = "Python3"
 
-  content = <<-PYTHON
-#!/usr/bin/env python3
-import json
-import os
-import sys
-
-SUBSCRIPTION_ID = "${data.azurerm_subscription.current.subscription_id}"
-RESOURCE_GROUP = "${var.resource_group_name}"
-VM_NAME = "${var.app_name}-jumpbox"
-
-def get_automation_token():
-    import urllib.error
-    import urllib.request
-
-    identity_endpoint = os.environ.get("IDENTITY_ENDPOINT")
-    identity_header = os.environ.get("IDENTITY_HEADER")
-
-    if not identity_endpoint or not identity_header:
-        raise Exception("IDENTITY_ENDPOINT or IDENTITY_HEADER not set. Ensure managed identity is enabled on the Automation Account.")
-
-    token_url = f"{identity_endpoint}?resource=https://management.azure.com/&api-version=2019-08-01"
-    req = urllib.request.Request(token_url)
-    req.add_header("X-IDENTITY-HEADER", identity_header)
-    req.add_header("Metadata", "true")
-
-    try:
-        response = urllib.request.urlopen(req, timeout=30)
-        data = json.loads(response.read().decode())
-        return data["access_token"]
-    except urllib.error.HTTPError as e:
-        body = e.read().decode() if e.fp else ""
-        raise Exception(f"Failed to get token: {e.code} {e.reason} - {body}")
-
-def start_vm(access_token):
-    import urllib.error
-    import urllib.request
-
-    url = f"https://management.azure.com/subscriptions/{SUBSCRIPTION_ID}/resourceGroups/{RESOURCE_GROUP}/providers/Microsoft.Compute/virtualMachines/{VM_NAME}/start?api-version=2023-07-01"
-    req = urllib.request.Request(url, data=b"", method="POST")
-    req.add_header("Authorization", f"Bearer {access_token}")
-    req.add_header("Content-Type", "application/json")
-
-    try:
-        response = urllib.request.urlopen(req, timeout=60)
-        print(f"VM start initiated successfully (status: {response.status})")
-    except urllib.error.HTTPError as e:
-        if e.code == 202:
-            print("VM start initiated successfully (async operation - 202)")
-            return
-        body = e.read().decode() if e.fp else ""
-        raise Exception(f"Failed to start VM: {e.code} {e.reason} - {body}")
-
-def main():
-    try:
-        print(f"Starting VM: {VM_NAME}")
-        token = get_automation_token()
-        start_vm(token)
-    except Exception as e:
-        print(f"ERROR: {str(e)}")
-        sys.exit(1)
-
-if __name__ == "__main__":
-    main()
-  PYTHON
+  content = templatefile("${path.module}/scripts/start_vm.py", {
+    subscription_id     = data.azurerm_subscription.current.subscription_id
+    resource_group_name = var.resource_group_name
+    app_name            = var.app_name
+  })
 
   tags = var.common_tags
   lifecycle {
@@ -226,170 +167,27 @@ resource "azurerm_automation_runbook" "create_bastion" {
   log_progress            = false
   runbook_type            = "Python3"
 
-  content = <<-PYTHON
-  #!/usr/bin/env python3
-  import json
-  import os
-  import sys
-  import time
-  import urllib.error
-  import urllib.request
-
-  SUBSCRIPTION_ID = "${data.azurerm_subscription.current.subscription_id}"
-  RESOURCE_GROUP = "${var.resource_group_name}"
-  LOCATION = "${var.location}"
-  BASTION_NAME = "${var.app_name}-bastion"
-  PUBLIC_IP_NAME = "${var.app_name}-bastion-pip"
-  BASTION_SUBNET_ID = "${var.bastion_subnet_id}"
-  BASTION_SKU = "${var.bastion_sku}"
-  ENABLE_TUNNELING = ${var.bastion_tunneling_enabled ? "True" : "False"}
-  TAGS = json.loads(r'''${jsonencode(var.common_tags)}''')
-  PUBLIC_IP_API_VERSION = "2023-09-01"
-  BASTION_API_VERSION = "2023-09-01"
-
-  PUBLIC_IP_URL = f"https://management.azure.com/subscriptions/{SUBSCRIPTION_ID}/resourceGroups/{RESOURCE_GROUP}/providers/Microsoft.Network/publicIPAddresses/{PUBLIC_IP_NAME}?api-version={PUBLIC_IP_API_VERSION}"
-  BASTION_URL = f"https://management.azure.com/subscriptions/{SUBSCRIPTION_ID}/resourceGroups/{RESOURCE_GROUP}/providers/Microsoft.Network/bastionHosts/{BASTION_NAME}?api-version={BASTION_API_VERSION}"
-  PUBLIC_IP_ID = f"/subscriptions/{SUBSCRIPTION_ID}/resourceGroups/{RESOURCE_GROUP}/providers/Microsoft.Network/publicIPAddresses/{PUBLIC_IP_NAME}"
-
-  def get_automation_token():
-    identity_endpoint = os.environ.get("IDENTITY_ENDPOINT")
-    identity_header = os.environ.get("IDENTITY_HEADER")
-
-    if not identity_endpoint or not identity_header:
-      raise Exception("IDENTITY_ENDPOINT or IDENTITY_HEADER not set. Ensure managed identity is enabled on the Automation Account.")
-
-    token_url = f"{identity_endpoint}?resource=https://management.azure.com/&api-version=2019-08-01"
-    req = urllib.request.Request(token_url)
-    req.add_header("X-IDENTITY-HEADER", identity_header)
-    req.add_header("Metadata", "true")
-
-    response = urllib.request.urlopen(req, timeout=30)
-    data = json.loads(response.read().decode())
-    return data["access_token"]
-
-  def arm_request(method, url, access_token, body=None):
-    payload = None if body is None else json.dumps(body).encode("utf-8")
-    req = urllib.request.Request(url, data=payload, method=method)
-    req.add_header("Authorization", f"Bearer {access_token}")
-    req.add_header("Content-Type", "application/json")
-
-    try:
-      response = urllib.request.urlopen(req, timeout=60)
-      response_body = response.read().decode() if response.length != 0 else ""
-      return response.status, response_body
-    except urllib.error.HTTPError as exc:
-      response_body = exc.read().decode() if exc.fp else ""
-      return exc.code, response_body
-
-  def ensure_success(status_code, response_body, allowed_codes, action_name):
-    if status_code not in allowed_codes:
-      raise Exception(f"{action_name} failed: HTTP {status_code} - {response_body}")
-
-  def wait_for_provisioning_state(url, access_token, resource_name, desired_state="Succeeded", timeout_seconds=900, deleted=False):
-    deadline = time.time() + timeout_seconds
-    while time.time() < deadline:
-      status_code, response_body = arm_request("GET", url, access_token)
-      if deleted:
-        if status_code == 404:
-          print(f"{resource_name} deletion confirmed")
-          return
-      elif status_code == 200:
-        body = json.loads(response_body) if response_body else {}
-        provisioning_state = body.get("properties", {}).get("provisioningState")
-        print(f"{resource_name} provisioningState={provisioning_state}")
-        if provisioning_state == desired_state:
-          return
-      time.sleep(20)
-
-    if deleted:
-      raise Exception(f"Timed out waiting for {resource_name} to be deleted")
-    raise Exception(f"Timed out waiting for {resource_name} to reach provisioningState={desired_state}")
-
-  def ensure_public_ip(access_token):
-    status_code, response_body = arm_request("GET", PUBLIC_IP_URL, access_token)
-    if status_code == 200:
-      print("Public IP already exists")
-      return
-    if status_code != 404:
-      raise Exception(f"Failed to query Public IP: HTTP {status_code} - {response_body}")
-
-    payload = {
-      "location": LOCATION,
-      "sku": {
-        "name": "Standard",
-        "tier": "Regional"
-      },
-      "properties": {
-        "ddosSettings": {
-          "protectionMode": "VirtualNetworkInherited"
-        },
-        "idleTimeoutInMinutes": 4,
-        "publicIPAddressVersion": "IPv4",
-        "publicIPAllocationMethod": "Static"
-      },
-      "tags": TAGS
-    }
-
-    status_code, response_body = arm_request("PUT", PUBLIC_IP_URL, access_token, payload)
-    ensure_success(status_code, response_body, {200, 201}, "Create Public IP")
-    wait_for_provisioning_state(PUBLIC_IP_URL, access_token, "Public IP")
-
-  def ensure_bastion(access_token):
-    status_code, response_body = arm_request("GET", BASTION_URL, access_token)
-    if status_code == 200:
-      print("Bastion host already exists")
-      return
-    if status_code != 404:
-      raise Exception(f"Failed to query Bastion host: HTTP {status_code} - {response_body}")
-
-    payload = {
-      "location": LOCATION,
-      "sku": {
-        "name": BASTION_SKU
-      },
-      "properties": {
-        "disableCopyPaste": False,
-        "enableFileCopy": False,
-        "enableIpConnect": False,
-        "enableShareableLink": False,
-        "enableTunneling": ENABLE_TUNNELING,
-        "ipConfigurations": [
-          {
-            "name": "configuration",
-            "properties": {
-              "privateIPAllocationMethod": "Dynamic",
-              "publicIPAddress": {
-                "id": PUBLIC_IP_ID
-              },
-              "subnet": {
-                "id": BASTION_SUBNET_ID
-              }
-            }
-          }
-        ],
-        "scaleUnits": 2
-      },
-      "tags": TAGS
-    }
-
-    status_code, response_body = arm_request("PUT", BASTION_URL, access_token, payload)
-    ensure_success(status_code, response_body, {200, 201}, "Create Bastion host")
-    wait_for_provisioning_state(BASTION_URL, access_token, "Bastion host")
-
-  def main():
-    try:
-      print(f"Ensuring Bastion host exists: {BASTION_NAME}")
-      token = get_automation_token()
-      ensure_public_ip(token)
-      ensure_bastion(token)
-      print("Bastion host is ready")
-    except Exception as exc:
-      print(f"ERROR: {str(exc)}")
-      sys.exit(1)
-
-  if __name__ == "__main__":
-    main()
-    PYTHON
+  content = templatefile("${path.module}/scripts/create_bastion.py", {
+    subscription_id                           = data.azurerm_subscription.current.subscription_id
+    resource_group_name                       = var.resource_group_name
+    location                                  = var.location
+    app_name                                  = var.app_name
+    bastion_subnet_id                         = coalesce(var.bastion_subnet_id, "")
+    bastion_sku                               = var.bastion_sku
+    bastion_tunneling_enabled                 = tostring(var.bastion_tunneling_enabled)
+    bastion_copy_paste_enabled                = tostring(var.bastion_copy_paste_enabled)
+    bastion_file_copy_enabled                 = tostring(var.bastion_file_copy_enabled)
+    bastion_ip_connect_enabled                = tostring(var.bastion_ip_connect_enabled)
+    bastion_shareable_link_enabled            = tostring(var.bastion_shareable_link_enabled)
+    bastion_scale_units                       = tostring(var.bastion_scale_units)
+    bastion_public_ip_sku                     = var.bastion_public_ip_sku
+    bastion_public_ip_sku_tier                = var.bastion_public_ip_sku_tier
+    bastion_public_ip_allocation_method       = var.bastion_public_ip_allocation_method
+    bastion_public_ip_version                 = var.bastion_public_ip_version
+    bastion_public_ip_idle_timeout_in_minutes = tostring(var.bastion_public_ip_idle_timeout_in_minutes)
+    bastion_public_ip_ddos_protection_mode    = var.bastion_public_ip_ddos_protection_mode
+    common_tags_json                          = jsonencode(var.common_tags)
+  })
 
   tags = var.common_tags
   lifecycle {
@@ -407,98 +205,11 @@ resource "azurerm_automation_runbook" "delete_bastion" {
   log_progress            = false
   runbook_type            = "Python3"
 
-  content = <<-PYTHON
-  #!/usr/bin/env python3
-  import json
-  import os
-  import sys
-  import time
-  import urllib.error
-  import urllib.request
-
-  SUBSCRIPTION_ID = "${data.azurerm_subscription.current.subscription_id}"
-  RESOURCE_GROUP = "${var.resource_group_name}"
-  BASTION_NAME = "${var.app_name}-bastion"
-  PUBLIC_IP_NAME = "${var.app_name}-bastion-pip"
-  PUBLIC_IP_API_VERSION = "2023-09-01"
-  BASTION_API_VERSION = "2023-09-01"
-
-  PUBLIC_IP_URL = f"https://management.azure.com/subscriptions/{SUBSCRIPTION_ID}/resourceGroups/{RESOURCE_GROUP}/providers/Microsoft.Network/publicIPAddresses/{PUBLIC_IP_NAME}?api-version={PUBLIC_IP_API_VERSION}"
-  BASTION_URL = f"https://management.azure.com/subscriptions/{SUBSCRIPTION_ID}/resourceGroups/{RESOURCE_GROUP}/providers/Microsoft.Network/bastionHosts/{BASTION_NAME}?api-version={BASTION_API_VERSION}"
-
-  def get_automation_token():
-    identity_endpoint = os.environ.get("IDENTITY_ENDPOINT")
-    identity_header = os.environ.get("IDENTITY_HEADER")
-
-    if not identity_endpoint or not identity_header:
-      raise Exception("IDENTITY_ENDPOINT or IDENTITY_HEADER not set. Ensure managed identity is enabled on the Automation Account.")
-
-    token_url = f"{identity_endpoint}?resource=https://management.azure.com/&api-version=2019-08-01"
-    req = urllib.request.Request(token_url)
-    req.add_header("X-IDENTITY-HEADER", identity_header)
-    req.add_header("Metadata", "true")
-
-    response = urllib.request.urlopen(req, timeout=30)
-    data = json.loads(response.read().decode())
-    return data["access_token"]
-
-  def arm_request(method, url, access_token, body=None):
-    payload = None if body is None else json.dumps(body).encode("utf-8")
-    req = urllib.request.Request(url, data=payload, method=method)
-    req.add_header("Authorization", f"Bearer {access_token}")
-    req.add_header("Content-Type", "application/json")
-
-    try:
-      response = urllib.request.urlopen(req, timeout=60)
-      response_body = response.read().decode() if response.length != 0 else ""
-      return response.status, response_body
-    except urllib.error.HTTPError as exc:
-      response_body = exc.read().decode() if exc.fp else ""
-      return exc.code, response_body
-
-  def ensure_success(status_code, response_body, allowed_codes, action_name):
-    if status_code not in allowed_codes:
-      raise Exception(f"{action_name} failed: HTTP {status_code} - {response_body}")
-
-  def wait_for_deletion(url, access_token, resource_name, timeout_seconds=900):
-    deadline = time.time() + timeout_seconds
-    while time.time() < deadline:
-      status_code, response_body = arm_request("GET", url, access_token)
-      if status_code == 404:
-        print(f"{resource_name} deletion confirmed")
-        return
-      if status_code not in {200, 404}:
-        raise Exception(f"Unexpected GET response while waiting for {resource_name} deletion: HTTP {status_code} - {response_body}")
-      time.sleep(20)
-
-    raise Exception(f"Timed out waiting for {resource_name} to be deleted")
-
-  def delete_if_present(url, access_token, resource_name):
-    status_code, response_body = arm_request("GET", url, access_token)
-    if status_code == 404:
-      print(f"{resource_name} already absent")
-      return
-    if status_code != 200:
-      raise Exception(f"Failed to query {resource_name}: HTTP {status_code} - {response_body}")
-
-    status_code, response_body = arm_request("DELETE", url, access_token)
-    ensure_success(status_code, response_body, {200, 202, 204}, f"Delete {resource_name}")
-    wait_for_deletion(url, access_token, resource_name)
-
-  def main():
-    try:
-      print(f"Deleting Bastion host if present: {BASTION_NAME}")
-      token = get_automation_token()
-      delete_if_present(BASTION_URL, token, "Bastion host")
-      delete_if_present(PUBLIC_IP_URL, token, "Bastion public IP")
-      print("Bastion host and public IP are absent")
-    except Exception as exc:
-      print(f"ERROR: {str(exc)}")
-      sys.exit(1)
-
-  if __name__ == "__main__":
-    main()
-    PYTHON
+  content = templatefile("${path.module}/scripts/delete_bastion.py", {
+    subscription_id     = data.azurerm_subscription.current.subscription_id
+    resource_group_name = var.resource_group_name
+    app_name            = var.app_name
+  })
 
   tags = var.common_tags
   lifecycle {

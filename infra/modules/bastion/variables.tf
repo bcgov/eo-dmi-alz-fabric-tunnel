@@ -49,3 +49,69 @@ variable "tunneling_enabled" {
   type        = bool
   default     = true
 }
+
+variable "copy_paste_enabled" {
+  description = "Enable copy and paste support in Azure Bastion sessions."
+  type        = bool
+  default     = true
+}
+
+variable "file_copy_enabled" {
+  description = "Enable file copy support in Azure Bastion sessions."
+  type        = bool
+  default     = false
+}
+
+variable "ip_connect_enabled" {
+  description = "Enable Azure Bastion IP Connect."
+  type        = bool
+  default     = false
+}
+
+variable "shareable_link_enabled" {
+  description = "Enable Azure Bastion shareable links."
+  type        = bool
+  default     = false
+}
+
+variable "scale_units" {
+  description = "Scale units to configure on the Azure Bastion host."
+  type        = number
+  default     = 2
+}
+
+variable "public_ip_sku" {
+  description = "SKU for the Azure Bastion public IP."
+  type        = string
+  default     = "Standard"
+}
+
+variable "public_ip_sku_tier" {
+  description = "SKU tier for the Azure Bastion public IP."
+  type        = string
+  default     = "Regional"
+}
+
+variable "public_ip_allocation_method" {
+  description = "Allocation method for the Azure Bastion public IP."
+  type        = string
+  default     = "Static"
+}
+
+variable "public_ip_version" {
+  description = "IP version for the Azure Bastion public IP."
+  type        = string
+  default     = "IPv4"
+}
+
+variable "public_ip_idle_timeout_in_minutes" {
+  description = "Idle timeout in minutes for the Azure Bastion public IP."
+  type        = number
+  default     = 4
+}
+
+variable "public_ip_ddos_protection_mode" {
+  description = "DDoS protection mode for the Azure Bastion public IP."
+  type        = string
+  default     = "VirtualNetworkInherited"
+}
