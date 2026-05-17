@@ -1,473 +1,472 @@
 # EO DMI ALZ Fabric Tunnel
 
-This repository provisions a small Azure Bastion based access path so developers can reach private Azure data-plane endpoints from a local browser without a VPN and without exposing the private network to the internet.
+A small **Azure Bastion** access path so developers can reach private Azure endpoints from their workstation — **no VPN, no public IPs, no SSH keys**. Works for both **browsers** (SOCKS5 dynamic proxy) and **native TCP clients** like `psql`, DBeaver, or `redis-cli` (local port forward). Authentication is **Entra ID + MFA** only.
 
-Authentication is Entra ID only. Developers sign in with the normal browser-based Azure CLI flow and complete MFA in the browser.
-The signing-in Entra user, or a group they belong to, must also have `Virtual Machine Administrator Login` on the Linux jumpbox VM or Bastion SSH authentication will be rejected. This VM role assignment is manual and is not created by Terraform in this repo.
+> **TL;DR** — Install the Azure CLI extensions, run `az login`, run the proxy script, then point a dedicated browser profile at `socks5://127.0.0.1:8228`. For database / cache clients see [Native tunneling for data clients](#native-tunneling-for-data-clients).
 
-## What Gets Deployed
+---
 
-The Terraform under `infra/` deploys:
+## Table of contents
 
-- Azure Bastion Standard with native client tunneling enabled
-- A minimal Ubuntu jumpbox VM with no public IP
-- Entra ID SSH login extension on the jumpbox
-- Daily auto-shutdown at 7 PM Pacific time
-- Weekday auto-start at 8 AM Pacific time using Azure Automation
+- [Quick start](#quick-start)
+- [Prerequisites](#prerequisites)
+- [How it works](#how-it-works)
+- [What gets deployed](#what-gets-deployed)
+- [Configure your browser](#configure-your-browser)
+- [Native tunneling for data clients](#native-tunneling-for-data-clients)
+- [VM schedule](#vm-schedule)
+- [Security model](#security-model)
+- [GitHub Actions deployment](#github-actions-deployment)
+- [Troubleshooting](#troubleshooting)
+- [Useful commands](#useful-commands)
+- [FAQ — Why SOCKS5?](#faq--why-socks5)
 
-Terraform generates an internal bootstrap SSH key pair only because the Azure Linux VM resource requires an `admin_ssh_key` when password authentication is disabled. The private key is not written locally, but it is retained in Terraform state and exposed as a sensitive output for break-glass use. Normal developer access still uses Entra ID only.
+---
 
-```mermaid
-flowchart LR
-    developer[Developer workstation]
-    browser[Local browser]
-    cli[Azure CLI session]
-    proxy[Local SOCKS5 proxy<br/>localhost:8228]
-    entra[Microsoft Entra ID<br/>browser login + MFA]
-    bastion[Azure Bastion Standard<br/>native client tunneling]
-    jumpbox[Minimal Ubuntu jumpbox<br/>private IP only]
-    privateDns[Private DNS resolution]
-    fabric[Private data-plane endpoints]
+## Quick start
 
-    browser --> proxy
-    developer --> cli
-    cli --> entra
-    cli --> bastion
-    proxy --> bastion
-    bastion --> jumpbox
-    jumpbox --> privateDns
-    jumpbox --> fabric
-```
+> Time to first connection: ~2 minutes once prerequisites are in place.
 
-## Developer Connection Flow
+### 1. Sign in to Azure
 
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Dev as Developer
-    participant Browser as System Browser
-    participant CLI as Azure CLI
-    participant Entra as Microsoft Entra ID
-    participant ARM as Azure Resource Manager
-    participant Bastion as Azure Bastion
-    participant VM as Jumpbox VM
-    participant Endpoint as Private data-plane endpoint
-
-    Dev->>CLI: az login --tenant <tenant-id>
-    CLI->>Browser: Open browser login
-    Browser->>Entra: User signs in and completes MFA
-    Entra-->>CLI: Azure CLI receives Entra session
-    Dev->>CLI: Run bastion-proxy script
-    CLI->>ARM: Select subscription and resolve VM/Bastion
-    CLI->>ARM: Start VM if stopped and approved
-    CLI->>Bastion: az network bastion ssh --auth-type AAD
-    Bastion->>VM: Entra-authenticated SSH session
-    CLI-->>Dev: SOCKS5 proxy listening on localhost:8228
-    Dev->>Endpoint: Browser request through SOCKS5 proxy
-    Endpoint-->>Dev: Private response through jumpbox tunnel
-```
-
-## Authentication Rules
-
-Use browser-based Entra login with MFA:
-
-```powershell
+```bash
 az login --tenant <tenant-id>
-az account set --subscription <subscription-id>
+az account set --subscription eb733692-257d-40c8-bd7b-372e689f3b7f
 ```
 
-Only browser-based Entra MFA login is supported for this workflow.
+A browser opens for MFA. Only browser-based Entra login is supported.
 
-Access requires:
+### 2. Start the SOCKS proxy
 
-- Permission to the Azure subscription
-- A manual `Virtual Machine Administrator Login` RBAC assignment on the Linux jumpbox VM for the specific signing-in user, or for a group they belong to
-- Azure Bastion Standard or Premium with native tunneling enabled
-- Azure CLI extensions: `bastion` and `ssh`
-
-If this role assignment is missing, `az network bastion ssh --auth-type AAD` will reach the VM but fail authentication, typically with `Permission denied (publickey)`.
-
-For the `b9cee3` tools environment, make this a manual VM step for:
-
-- `DO_PuC_Azure_Live_b9cee3_Owners`
-- `DO_PuC_Azure_Live_b9cee3_Contributors`
-
-The proxy scripts will install missing Azure CLI `bastion` and `ssh` extensions automatically on first run. If you prefer to install them yourself ahead of time:
+**Windows (PowerShell):**
 
 ```powershell
+.\infra\scripts\bastion-proxy.ps1 `
+  -ResourceGroup eo-dmi-alz-fabric-tunnel-tools `
+  -BastionName   eo-dmi-alz-fabric-tunnel-bastion `
+  -VmName        eo-dmi-alz-fabric-tunnel-jumpbox
+```
+
+**macOS / Linux (Bash):**
+
+```bash
+./infra/scripts/bastion-proxy.sh \
+  --resource-group eo-dmi-alz-fabric-tunnel-tools \
+  --bastion-name   eo-dmi-alz-fabric-tunnel-bastion \
+  --vm-name        eo-dmi-alz-fabric-tunnel-jumpbox
+```
+
+The script prints when the SOCKS endpoint is live (default: `localhost:8228`).
+
+### 3. Point a browser at the proxy
+
+Launch a **separate browser profile** so normal browsing isn't routed through the tunnel:
+
+```powershell
+# Edge
+msedge.exe --user-data-dir="$env:TEMP\fabric-tunnel-edge" --proxy-server="socks5://127.0.0.1:8228"
+
+# Chrome
+chrome.exe --user-data-dir="$env:TEMP\fabric-tunnel-chrome" --proxy-server="socks5://127.0.0.1:8228"
+```
+
+Then browse to your private endpoint, for example `https://<account>.dfs.core.windows.net/`.
+
+> Need a database or cache client instead of a browser? Jump to [Native tunneling for data clients](#native-tunneling-for-data-clients).
+
+---
+
+## Prerequisites
+
+You need **all** of the following before the proxy will work:
+
+| Requirement | Notes |
+|---|---|
+| Azure subscription access | Reader role or higher on the target subscription |
+| `Virtual Machine Administrator Login` RBAC on the jumpbox | Usually granted via `vm_admin_login_principal_ids` |
+| Azure CLI installed | Any recent version |
+| `bastion` and `ssh` CLI extensions | See install command below |
+| Azure Bastion Standard or Premium | With **native client tunneling** enabled |
+
+Install the CLI extensions once:
+
+```bash
 az extension add --name bastion
 az extension add --name ssh
 ```
 
-Break-glass retrieval if Entra login is unavailable:
+---
 
-```powershell
-terraform -chdir=infra output -raw jumpbox_admin_username
-terraform -chdir=infra output -raw jumpbox_bootstrap_ssh_private_key
+## How it works
+
+### Developer connection flow
+
+```mermaid
+sequenceDiagram
+  autonumber
+  actor Dev as Developer
+  participant Browser as System Browser
+  participant CLI as Azure CLI
+  participant Entra as Microsoft Entra ID
+  participant ARM as Azure Resource Manager
+  participant Bastion as Azure Bastion
+  participant VM as Jumpbox VM
+  participant Endpoint as Private data-plane endpoint
+
+  Dev->>CLI: az login --tenant <tenant-id>
+  CLI->>Browser: Open browser login
+  Browser->>Entra: User signs in and completes MFA
+  Entra-->>CLI: Azure CLI receives Entra session
+  Dev->>CLI: Run bastion-proxy script
+  CLI->>ARM: Select subscription and resolve VM/Bastion
+  CLI->>ARM: Start VM if stopped and approved
+  CLI->>Bastion: az network bastion ssh --auth-type AAD
+  Bastion->>VM: Entra-authenticated SSH session
+  CLI-->>Dev: SOCKS5 proxy listening on localhost:8228
+  Dev->>Endpoint: Browser request through SOCKS5 proxy
+  Endpoint-->>Dev: Private response through jumpbox tunnel
 ```
 
-## Start The Local SOCKS Proxy
+### High-level architecture
 
-Default deployed names for the `tools` environment are:
+```mermaid
+flowchart LR
+  developer[Developer workstation]
+  browser[Local browser]
+  cli[Azure CLI session]
+  proxy[Local SOCKS5 proxy<br/>localhost:8228]
+  entra[Microsoft Entra ID<br/>browser login + MFA]
+  bastion[Azure Bastion Standard<br/>native client tunneling]
+  jumpbox[Minimal Ubuntu jumpbox<br/>private IP only]
+  privateDns[Private DNS resolution]
+  fabric[Private data-plane endpoints]
+
+  browser --> proxy
+  developer --> cli
+  cli --> entra
+  cli --> bastion
+  proxy --> bastion
+  bastion --> jumpbox
+  jumpbox --> privateDns
+  jumpbox --> fabric
+```
+
+### What the proxy script does
+
+```mermaid
+flowchart TD
+  start([Run proxy script]) --> prereq{Azure CLI + extensions installed?}
+  prereq -- no --> install[Install bastion and ssh extensions]
+  prereq -- yes --> login{Already logged in?}
+  install --> login
+  login -- no --> browserLogin[Run az login<br/>browser opens for MFA]
+  login -- yes --> subscription[Set subscription]
+  browserLogin --> subscription
+  subscription --> vmState{VM running?}
+  vmState -- no --> prompt[Prompt developer to start VM]
+  prompt --> startVm[Start VM and wait]
+  vmState -- yes --> bastionCheck[Check Bastion state]
+  startVm --> bastionCheck
+  bastionCheck --> socks[Open AAD Bastion SSH session<br/>ssh -D localhost:8228]
+  socks --> ready([Browser can use SOCKS5 proxy])
+```
+
+In order, the script:
+
+1. Verifies the Azure CLI and required extensions.
+2. Runs `az login` if no session exists.
+3. Sets the target subscription.
+4. Resolves the jumpbox VM resource ID.
+5. Prompts to start the VM if it is stopped.
+6. Confirms Bastion is provisioned.
+7. Opens an Entra-authenticated Bastion SSH session with dynamic SOCKS forwarding.
+8. Prints the active SOCKS endpoint (`localhost:8228` by default).
+
+---
+
+## What gets deployed
+
+Terraform under `infra/` deploys:
+
+- Azure Bastion Standard with native client tunneling
+- A minimal Ubuntu jumpbox VM (**no public IP**)
+- Entra ID SSH login extension on the jumpbox
+- RBAC for configured Entra users or groups
+- Daily auto-shutdown at 7 PM Pacific
+- Weekday auto-start at 8 AM Pacific (Azure Automation)
+
+> **Security highlight:** No SSH key pair is generated, stored, output, or used for normal access.
+
+### Default resource names
 
 | Resource | Name |
-| --- | --- |
+|---|---|
 | Resource group | `eo-dmi-alz-fabric-tunnel-tools` |
 | Bastion host | `eo-dmi-alz-fabric-tunnel-bastion` |
 | Jumpbox VM | `eo-dmi-alz-fabric-tunnel-jumpbox` |
 | Default SOCKS port | `8228` |
 
-Windows PowerShell:
+---
 
-```powershell
-.\infra\scripts\bastion-proxy.ps1 `
-  -ResourceGroup eo-dmi-alz-fabric-tunnel-tools `
-  -BastionName eo-dmi-alz-fabric-tunnel-bastion `
-  -VmName eo-dmi-alz-fabric-tunnel-jumpbox
-```
+## Configure your browser
 
-Bash:
+The proxy only affects applications configured to use it. **Use a dedicated browser profile** so regular browsing isn't routed through the tunnel.
 
-```bash
-./infra/scripts/bastion-proxy.sh \
-  --resource-group eo-dmi-alz-fabric-tunnel-tools \
-  --bastion-name eo-dmi-alz-fabric-tunnel-bastion \
-  --vm-name eo-dmi-alz-fabric-tunnel-jumpbox
-```
-
-If you do not want to clone this repository locally, you can download either script directly from the repo's raw GitHub URL and run it from a temporary file.
-
-Copy-paste one-liners from `main`:
-
-PowerShell:
-
-```powershell
-$scriptPath = Join-Path $env:TEMP 'bastion-proxy.ps1'; Invoke-WebRequest 'https://raw.githubusercontent.com/bcgov/eo-dmi-alz-fabric-tunnel/main/infra/scripts/bastion-proxy.ps1' -OutFile $scriptPath; Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force; & $scriptPath -ResourceGroup eo-dmi-alz-fabric-tunnel-tools -BastionName eo-dmi-alz-fabric-tunnel-bastion -VmName eo-dmi-alz-fabric-tunnel-jumpbox
-```
-
-Bash:
-
-```bash
-script_path="$(mktemp /tmp/bastion-proxy.XXXXXX.sh)" && curl -fsSL "https://raw.githubusercontent.com/bcgov/eo-dmi-alz-fabric-tunnel/main/infra/scripts/bastion-proxy.sh" -o "$script_path" && chmod +x "$script_path" && "$script_path" --resource-group eo-dmi-alz-fabric-tunnel-tools --bastion-name eo-dmi-alz-fabric-tunnel-bastion --vm-name eo-dmi-alz-fabric-tunnel-jumpbox
-```
-
-PowerShell from raw GitHub URL:
-
-```powershell
-$repoRef = 'main'
-$scriptUrl = "https://raw.githubusercontent.com/bcgov/eo-dmi-alz-fabric-tunnel/$repoRef/infra/scripts/bastion-proxy.ps1"
-$scriptPath = Join-Path $env:TEMP 'bastion-proxy.ps1'
-Invoke-WebRequest -Uri $scriptUrl -OutFile $scriptPath
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
-
-& $scriptPath `
-  -ResourceGroup eo-dmi-alz-fabric-tunnel-tools `
-  -BastionName eo-dmi-alz-fabric-tunnel-bastion `
-  -VmName eo-dmi-alz-fabric-tunnel-jumpbox
-```
-
-The PowerShell examples above set `ExecutionPolicy` to `Bypass` for the current process only. They do not change the machine-wide policy.
-
-Bash from raw GitHub URL:
-
-```bash
-repo_ref=main
-script_url="https://raw.githubusercontent.com/bcgov/eo-dmi-alz-fabric-tunnel/${repo_ref}/infra/scripts/bastion-proxy.sh"
-script_path="$(mktemp /tmp/bastion-proxy.XXXXXX.sh)"
-curl -fsSL "$script_url" -o "$script_path"
-chmod +x "$script_path"
-
-"$script_path" \
-  --resource-group eo-dmi-alz-fabric-tunnel-tools \
-  --bastion-name eo-dmi-alz-fabric-tunnel-bastion \
-  --vm-name eo-dmi-alz-fabric-tunnel-jumpbox
-```
-
-Replace `main` with a tag or commit SHA if you want to pin the exact script version instead of following the default branch.
-
-If you omit the subscription argument, the proxy scripts default to `ffc5e617-7f2d-4ddb-8b57-33fc43989a8c`. Pass `-SubscriptionId <subscription-id>` in PowerShell or `-s/--subscription <subscription-id>` in Bash to override it.
-
-Before running the proxy, make sure the Entra user you signed in with, or one of their Entra groups, has a manual `Virtual Machine Administrator Login` assignment on the Linux jumpbox VM.
-
-What the script does:
-
-1. Verifies Azure CLI and installs missing `bastion` and `ssh` extensions when needed.
-2. Uses browser-based `az login` if no Azure CLI session exists.
-3. Sets the target subscription.
-4. Resolves the jumpbox VM resource ID.
-5. Prompts to start the VM if it is stopped.
-6. Checks that Bastion is provisioned.
-7. Opens an Entra-authenticated Bastion SSH session with dynamic SOCKS forwarding.
-8. Prints the active SOCKS endpoint, usually `localhost:8228`.
-
-```mermaid
-flowchart TD
-    start([Run proxy script]) --> prereq{Azure CLI + extensions installed?}
-    prereq -- no --> install[Install bastion and ssh extensions]
-    prereq -- yes --> login{Already logged in?}
-    install --> login
-    login -- no --> browserLogin[Run az login<br/>browser opens for MFA]
-    login -- yes --> subscription[Set subscription]
-    browserLogin --> subscription
-    subscription --> vmState{VM running?}
-    vmState -- no --> prompt[Prompt developer to start VM]
-    prompt --> startVm[Start VM and wait]
-    vmState -- yes --> bastionCheck[Check Bastion state]
-    startVm --> bastionCheck
-    bastionCheck --> socks[Open AAD Bastion SSH session<br/>ssh -D localhost:8228]
-    socks --> ready([Browser can use SOCKS5 proxy])
-```
-
-## Configure A Browser
-
-The proxy only affects applications configured to use it. For browser data-plane access, use a dedicated browser profile or proxy configuration so regular browsing is not accidentally routed through the tunnel.
-
-Recommended browser proxy settings:
+### Recommended settings
 
 | Setting | Value |
-| --- | --- |
-| Proxy type | SOCKS5 |
-| Host | `127.0.0.1` or `localhost` |
-| Port | `8228` unless the script picked another port |
-| DNS | Resolve hostnames through the SOCKS5 proxy when the browser offers this option |
+|---|---|
+| Proxy type | `SOCKS5` |
+| Host | `127.0.0.1` (or `localhost`) |
+| Port | `8228` (unless the script picked another port) |
+| Remote DNS | **Resolve hostnames through the proxy** |
 
-Firefox has an explicit `Proxy DNS when using SOCKS v5` option. Enable it for private endpoint hostnames.
+- **Firefox** — enable *Proxy DNS when using SOCKS v5* in proxy settings.
+- **Chromium-based** — launch with `--proxy-server="socks5://127.0.0.1:8228"` (see [Quick start](#3-point-a-browser-at-the-proxy)).
 
-For Chromium-based browsers, launch a temporary profile with an explicit SOCKS proxy:
+### Example endpoints
 
-```powershell
-msedge.exe --user-data-dir="$env:TEMP\fabric-tunnel-edge" --proxy-server="socks5://127.0.0.1:8228"
 ```
-
-```powershell
-chrome.exe --user-data-dir="$env:TEMP\fabric-tunnel-chrome" --proxy-server="socks5://127.0.0.1:8228"
-```
-
-Then browse to the private data-plane endpoint, for example:
-
-```text
 https://<account>.dfs.core.windows.net/
 https://<account>.blob.core.windows.net/
 https://<workspace-or-service-private-hostname>/
 ```
 
-## Why SOCKS5 Works For All Endpoints
+---
 
-The SSH `-D` tunnel creates a dynamic SOCKS5 proxy. Instead of opening one port per service, the browser asks the proxy to connect to each target host and port. The jumpbox performs the network access from inside the VNet, where private endpoints and private DNS are reachable.
+## Native tunneling for data clients
 
-```mermaid
-flowchart LR
-    local[Local browser<br/>SOCKS5 localhost:8228]
-    ssh[SSH dynamic forwarding<br/>-D 8228 -N]
-    bastion[Azure Bastion]
-    vm[Jumpbox VM]
-    dns[Azure/private DNS]
-    storage[Storage data plane]
-    fabric[Fabric related private endpoints]
-    kv[Key Vault]
-    other[Other private PaaS endpoints]
+The same jumpbox path can expose private **TCP services** to local desktop tools — no browser involved. Developers can run normal data-plane operations from their workstation without making the service public.
 
-    local --> ssh --> bastion --> vm
-    vm --> dns
-    vm --> storage
-    vm --> fabric
-    vm --> kv
-    vm --> other
-```
+**Typical use cases**
 
-## Use Native Tunneling For Data Clients
+- **PostgreSQL** with DBeaver, `psql`, Azure Data Studio, migration tools
+- **Redis** with `redis-cli`, debug tooling, cache inspection
+- Any other private TCP endpoint the jumpbox can reach inside the VNet
 
-Azure Bastion native tunneling is not limited to browser access. The same jumpbox path can expose private TCP services to local client tools so developers can perform normal data operations from their workstation without opening those services publicly.
+**Two tunneling patterns**
 
-Typical examples:
+| Pattern | Flag | Use when |
+|---|---|---|
+| Dynamic SOCKS proxy | `ssh -D` | Browsers, or clients that natively support SOCKS5 |
+| Local TCP port forward | `ssh -L` | Service-specific tools that expect a host + port (most DB / cache clients) |
 
-- PostgreSQL with DBeaver, `psql`, Azure Data Studio, or migration tools
-- Redis with `redis-cli`, application debug tooling, or cache inspection utilities
-- Any other TCP-based private endpoint that the jumpbox can reach inside the VNet
+> [!IMPORTANT]
+> **Spokes are not natively connected.** If the Bastion / jumpbox and the target resource live in different subscriptions or different spoke VNets, the required network path (peering, NSG, private DNS) **must already be open** — Bastion alone won't bridge them.
 
-There are two useful tunneling patterns:
-
-- Dynamic SOCKS proxy with `ssh -D` for browsers or client tools that support SOCKS5 directly
-- Local TCP port forward with `ssh -L` for service-specific tools that expect a normal host and port
-
-PostgreSQL example:
+### Example: PostgreSQL port forward
 
 ```powershell
 $vmId = az vm show `
-  --subscription ffc5e617-7f2d-4ddb-8b57-33fc43989a8c `
-  --resource-group eo-dmi-alz-fabric-tunnel-tools `
-  --name eo-dmi-alz-fabric-tunnel-jumpbox `
+  --subscription    ffc5e617-7f2d-4ddb-8b57-33fc43989a8c `
+  --resource-group  eo-dmi-alz-fabric-tunnel-tools `
+  --name            eo-dmi-alz-fabric-tunnel-jumpbox `
   --query id `
   --output tsv
 
 az network bastion ssh `
-  --subscription ffc5e617-7f2d-4ddb-8b57-33fc43989a8c `
-  --name eo-dmi-alz-fabric-tunnel-bastion `
-  --resource-group eo-dmi-alz-fabric-tunnel-tools `
+  --subscription       ffc5e617-7f2d-4ddb-8b57-33fc43989a8c `
+  --name               eo-dmi-alz-fabric-tunnel-bastion `
+  --resource-group     eo-dmi-alz-fabric-tunnel-tools `
   --target-resource-id $vmId `
-  --auth-type AAD `
+  --auth-type          AAD `
   -- -L 127.0.0.1:15432:<postgres-private-hostname-or-ip>:5432 -N -o StrictHostKeyChecking=no
 ```
 
-After the tunnel is up, point the local client at `127.0.0.1:15432`.
+Once the tunnel is up, point your client at the local listener:
 
-- DBeaver host: `127.0.0.1`
-- DBeaver port: `15432`
-- SSL: use the normal PostgreSQL SSL mode required by the target service, commonly `require`
+| Setting | Value |
+|---|---|
+| Host | `127.0.0.1` |
+| Port | `15432` |
+| SSL mode | Whatever the target service requires (commonly `require`) |
 
-Redis example:
+### Example: Redis port forward
 
 ```powershell
 $vmId = az vm show `
-  --subscription ffc5e617-7f2d-4ddb-8b57-33fc43989a8c `
-  --resource-group eo-dmi-alz-fabric-tunnel-tools `
-  --name eo-dmi-alz-fabric-tunnel-jumpbox `
+  --subscription    ffc5e617-7f2d-4ddb-8b57-33fc43989a8c `
+  --resource-group  eo-dmi-alz-fabric-tunnel-tools `
+  --name            eo-dmi-alz-fabric-tunnel-jumpbox `
   --query id `
   --output tsv
 
 az network bastion ssh `
-  --subscription ffc5e617-7f2d-4ddb-8b57-33fc43989a8c `
-  --name eo-dmi-alz-fabric-tunnel-bastion `
-  --resource-group eo-dmi-alz-fabric-tunnel-tools `
+  --subscription       ffc5e617-7f2d-4ddb-8b57-33fc43989a8c `
+  --name               eo-dmi-alz-fabric-tunnel-bastion `
+  --resource-group     eo-dmi-alz-fabric-tunnel-tools `
   --target-resource-id $vmId `
-  --auth-type AAD `
+  --auth-type          AAD `
   -- -L 127.0.0.1:16379:<redis-private-hostname-or-ip>:6380 -N -o StrictHostKeyChecking=no
 ```
 
-After the tunnel is up, point the local client at `127.0.0.1:16379`. For Azure Cache for Redis, prefer TLS on port `6380` unless the target service explicitly uses a different port or configuration.
+Point your client at `127.0.0.1:16379`. For Azure Cache for Redis, use **TLS on port 6380** unless the target service is configured differently.
 
-Notes:
+### Tips
 
-<u>IMPORTANT: DIFFERENT SPOKES ARE NOT NATIVELY CONNECTED. IF THE BASTION/JUMPBOX AND THE TARGET RESOURCE ARE IN DIFFERENT SUBSCRIPTIONS OR DIFFERENT SPOKE VNETS, THE REQUIRED NETWORK PATH MUST ALREADY BE OPEN.</u>
+- **Prefer the private FQDN** when private DNS resolves correctly from the jumpbox VNet.
+- **Trying to debug a connection?** Substitute the private endpoint IP first — that isolates DNS issues from network reachability issues.
+- **Tunnel opens but client times out?** The local side is fine; the problem is almost always the jumpbox→service network path or private DNS, not your workstation.
+- **Keep the `az network bastion ssh` window open** for the whole client session — closing it tears down the tunnel.
 
-- Use the private service FQDN when private DNS resolves correctly from the jumpbox VNet.
-- If you are testing connectivity and suspect a DNS issue, use the private endpoint IP first to separate name resolution from network reachability.
-- If the Bastion tunnel opens but the client times out, the problem is usually the jumpbox-to-service network path or private DNS, not the local workstation.
-- Keep the `az network bastion ssh` session running while the local data client is connected.
+---
 
-## VM Schedule
+## VM schedule
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Running: Weekday 8 AM Pacific<br/>Azure Automation runbook
-    Running --> Deallocated: Daily 7 PM Pacific<br/>DevTest shutdown schedule
-    Deallocated --> Running: Developer starts VM<br/>proxy script prompt or Azure Portal
-    Deallocated --> Running: Next weekday 8 AM Pacific
+  [*] --> Running: Weekday 8 AM Pacific<br/>Azure Automation runbook
+  Running --> Deallocated: Daily 7 PM Pacific<br/>DevTest shutdown schedule
+  Deallocated --> Running: Developer starts VM<br/>proxy script prompt or Azure Portal
+  Deallocated --> Running: Next weekday 8 AM Pacific
 ```
 
-Schedule details:
+| Event | When |
+|---|---|
+| Auto-start | 8 AM Pacific, Monday–Friday |
+| Auto-shutdown | 7 PM Pacific, daily |
+| Weekend default | VM stays stopped unless started manually |
 
-- Auto-start: 8 AM Pacific, Monday through Friday
-- Auto-shutdown: 7 PM Pacific, every day
-- Weekends: VM remains stopped unless a developer starts it manually
-- Bastion cost is separate from VM cost and applies while Bastion exists
-- Optional Bastion automation is available behind `enable_bastion_automation = true`. It deletes Bastion daily at 7 PM Pacific and recreates it weekdays at 8 AM Pacific by using Azure Automation runbooks.
-- You can manually start the Bastion create runbook to bring Bastion back on demand. Use the Terraform outputs for the Automation account and runbook names after enabling the feature.
-- Bastion delete and recreate happens outside Terraform. If you run `terraform plan` while Bastion is intentionally absent, Terraform will show Bastion as missing and ready to recreate.
+> Bastion is billed continuously while it exists; VM cost is separate and only accrues while the VM is running.
 
-## GitHub Actions Deployment
+---
 
-The workflow in `.github/workflows/deploy-terraform.yml` deploys the infrastructure through GitHub Actions OIDC. That deployment path is non-interactive and separate from developer browser access.
-
-This Bastion-based access pattern aligns with the BC Gov Platform team guidance for Azure Landing Zone environments. See the [Azure Bastion guidance](https://developer.gov.bc.ca/docs/default/component/public-cloud-techdocs/azure/tools/bastion/) for the broader platform recommendation and operational considerations.
-
-```mermaid
-flowchart LR
-  gha["GitHub Actions workflow_dispatch"]
-  oidc["GitHub OIDC token"]
-  azureLogin["azure/login@v3"]
-  terraform["Terraform apply"]
-  rg["Azure resource group"]
-  resources["Bastion + jumpbox + automation"]
-
-    gha --> oidc --> azureLogin --> terraform --> rg --> resources
-```
-
-Deployment notes:
-
-- Terraform backend settings are supplied by workflow secrets and variables.
-- Human developers do not use GitHub OIDC for browser data-plane access.
-- Human developers use Entra browser login with MFA on their workstation.
-- The workflow dispatch now accepts `terraform_command` with `apply` or `destroy` and passes that through to `infra/deploy-terraform.sh`.
-- To deploy the access path, `enable_bastion` and `enable_jumpbox` must be true in the Terraform inputs used by the environment.
-- The Linux jumpbox VM login association is manual. For the `b9cee3` tools environment, associate `DO_PuC_Azure_Live_b9cee3_Owners` and `DO_PuC_Azure_Live_b9cee3_Contributors` with `Virtual Machine Administrator Login` on the VM outside Terraform.
-
-## Security Model
+## Security model
 
 ```mermaid
 flowchart TD
-    internet[Internet]
-    bastionPublic[Azure Bastion public IP<br/>managed service only]
-    vmNoPublic[Jumpbox VM<br/>no public IP]
-    rbac[VM Administrator Login RBAC]
-    entra[Entra ID + MFA]
-    nsg[Subnet NSGs]
-    private[Private endpoints]
+  internet[Internet]
+  bastionPublic[Azure Bastion public IP<br/>managed service only]
+  vmNoPublic[Jumpbox VM<br/>no public IP]
+  rbac[VM Administrator Login RBAC]
+  entra[Entra ID + MFA]
+  nsg[Subnet NSGs]
+  private[Private endpoints]
 
-    internet --> bastionPublic
-    entra --> rbac
-    rbac --> bastionPublic
-    bastionPublic --> vmNoPublic
-    nsg --> vmNoPublic
-    vmNoPublic --> private
+  internet --> bastionPublic
+  entra --> rbac
+  rbac --> bastionPublic
+  bastionPublic --> vmNoPublic
+  nsg --> vmNoPublic
+  vmNoPublic --> private
 ```
 
-Controls:
+### Controls
 
 - No SSH private key is generated by Terraform.
-- Password authentication is disabled on the jumpbox VM.
-- SSH access is through Azure Bastion native client tunneling.
-- VM login is authorized by a manual Entra ID RBAC assignment, specifically `Virtual Machine Administrator Login` on the Linux jumpbox VM.
-- The VM has no public IP address.
-- The browser tunnel is local-only on the developer workstation.
+- Password authentication is **disabled** on the jumpbox.
+- All SSH traffic flows through Azure Bastion native client tunneling.
+- VM login authorization is enforced by Entra ID RBAC.
+- The jumpbox has **no public IP**.
+- The browser tunnel is local-only to the developer's workstation.
+
+---
+
+## GitHub Actions deployment
+
+```mermaid
+flowchart LR
+  gha[GitHub Actions workflow_dispatch]
+  oidc[GitHub OIDC token]
+  azureLogin["azure/login@v2"]
+  terraform[Terraform apply]
+  rg[Azure resource group]
+  resources[Bastion + jumpbox + automation]
+
+  gha --> oidc --> azureLogin --> terraform --> rg --> resources
+```
+
+The workflow at `.github/workflows/deploy-terraform.yml` deploys infrastructure non-interactively via GitHub Actions OIDC — separate from developer browser access.
+
+**Deployment notes**
+
+- Terraform backend settings come from workflow secrets and variables.
+- Developers **do not** use GitHub OIDC for browser data-plane access — that's Entra browser login with MFA.
+- `enable_bastion` and `enable_jumpbox` must be `true` in the Terraform inputs for the environment.
+- Add developer or group object IDs to `vm_admin_login_principal_ids` so Entra SSH login is authorized.
+
+---
 
 ## Troubleshooting
 
-| Symptom | Check |
-| --- | --- |
-| `az network bastion ssh` fails with auth errors | Run `az login --tenant <tenant-id>` and complete MFA in the browser, then confirm `az account show`. |
-| Access denied to VM | Confirm the Entra user you signed in with, or one of their groups, has a manual `Virtual Machine Administrator Login` assignment on the Linux jumpbox VM. |
-| Proxy starts but browser cannot resolve private hostname | Ensure the browser is using SOCKS5 and proxy DNS is enabled where available. |
-| Script says VM is stopped | Let the script start it when prompted, wait for the weekday auto-start, or start it in the Azure Portal. |
-| Browser still uses normal internet path | Use a dedicated profile launched with `--proxy-server="socks5://127.0.0.1:8228"`. |
-| Bastion command is unavailable | Install or update the Azure CLI `bastion` and `ssh` extensions. |
-| Tunnel closes after long use | Re-run `az login` with browser MFA and start the proxy again. |
+| Symptom | Fix |
+|---|---|
+| `az network bastion ssh` fails with auth errors | Re-run `az login --tenant <tenant-id>`, complete MFA, then confirm with `az account show`. |
+| Access denied to the VM | Confirm your user or group object ID is in `vm_admin_login_principal_ids` and Terraform has applied. |
+| Proxy starts but the browser can't resolve a private hostname | Make sure the browser is set to SOCKS5 **and** remote DNS is enabled. |
+| Script reports the VM is stopped | Let the script start it when prompted, wait for the next weekday auto-start, or start it manually in the portal. |
+| Browser still uses the normal internet path | Launch a dedicated profile with `--proxy-server="socks5://127.0.0.1:8228"`. |
+| `bastion` command is unavailable | Install or update the CLI extensions: `az extension add --name bastion` and `--name ssh`. |
+| Tunnel closes after long use | Re-run `az login` with MFA and restart the proxy script. |
 
-## Useful Commands
+---
 
-Check current Azure CLI identity:
+## Useful commands
 
-```powershell
+**Check current Azure CLI identity**
+
+```bash
 az account show --query "{name:name, tenantId:tenantId, user:user.name}" --output table
 ```
 
-Start the VM manually:
+**Start the VM manually**
 
-```powershell
-az vm start `
-  --resource-group eo-dmi-alz-fabric-tunnel-tools `
-  --name eo-dmi-alz-fabric-tunnel-jumpbox
+```bash
+az vm start \
+  --resource-group eo-dmi-alz-fabric-tunnel-tools \
+  --name           eo-dmi-alz-fabric-tunnel-jumpbox
 ```
 
-Stop and deallocate the VM manually:
+**Stop and deallocate the VM manually**
 
-```powershell
-az vm deallocate `
-  --resource-group eo-dmi-alz-fabric-tunnel-tools `
-  --name eo-dmi-alz-fabric-tunnel-jumpbox
+```bash
+az vm deallocate \
+  --resource-group eo-dmi-alz-fabric-tunnel-tools \
+  --name           eo-dmi-alz-fabric-tunnel-jumpbox
 ```
 
-Validate Terraform locally:
+**Validate Terraform locally**
 
-```powershell
+```bash
 terraform -chdir=infra init -backend=false
 terraform -chdir=infra validate
 terraform -chdir=infra fmt -check -recursive
 ```
 
-Remove local Terraform init artifacts after validation if you do not want to keep them:
+**Clean up local Terraform artifacts (PowerShell)**
 
 ```powershell
-Remove-Item -Recurse -Force infra\.terraform -ErrorAction SilentlyContinue
-Remove-Item -Force infra\.terraform.lock.hcl -ErrorAction SilentlyContinue
+Remove-Item -Recurse -Force infra\.terraform        -ErrorAction SilentlyContinue
+Remove-Item -Force         infra\.terraform.lock.hcl -ErrorAction SilentlyContinue
 ```
+
+---
+
+## FAQ — Why SOCKS5?
+
+<details>
+<summary>Why does one SOCKS5 port reach every private endpoint?</summary>
+
+The SSH `-D` flag creates a **dynamic** SOCKS5 proxy. Instead of opening a separate forwarded port per service, the browser asks the proxy to connect to each `host:port` on demand. Network access happens **inside the VNet** from the jumpbox, where private endpoints and private DNS are reachable.
+
+```mermaid
+flowchart LR
+  local[Local browser<br/>SOCKS5 localhost:8228]
+  ssh[SSH dynamic forwarding<br/>-D 8228 -N]
+  bastion[Azure Bastion]
+  vm[Jumpbox VM]
+  dns[Azure/private DNS]
+  storage[Storage data plane]
+  fabric[Fabric private endpoints]
+  kv[Key Vault]
+  other[Other private PaaS endpoints]
+
+  local --> ssh --> bastion --> vm
+  vm --> dns
+  vm --> storage
+  vm --> fabric
+  vm --> kv
+  vm --> other
+```
+
+</details>
