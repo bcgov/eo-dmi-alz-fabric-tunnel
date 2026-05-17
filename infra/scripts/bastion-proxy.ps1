@@ -27,10 +27,10 @@
 #
 # EXAMPLES
 #   # Entra ID (AAD) auth:
-#   .\scripts\bastion-proxy.ps1 -ResourceGroup eo-dmi-alz-fabric-tunnel-tools -BastionName eo-dmi-alz-fabric-tunnel-bastion -VmName eo-dmi-alz-fabric-tunnel-jumpbox
+#   .\scripts\bastion-proxy.ps1 -ResourceGroup eo-dmi-alz-bastion-jumpbox-tools -BastionName eo-dmi-alz-bastion-jumpbox-bastion -VmName eo-dmi-alz-bastion-jumpbox-jumpbox
 #
 #   # Override the active Azure subscription if needed:
-#   .\scripts\bastion-proxy.ps1 -ResourceGroup eo-dmi-alz-fabric-tunnel-tools -BastionName eo-dmi-alz-fabric-tunnel-bastion -VmName eo-dmi-alz-fabric-tunnel-jumpbox -SubscriptionId <subscription-id>
+#   .\scripts\bastion-proxy.ps1 -ResourceGroup eo-dmi-alz-bastion-jumpbox-tools -BastionName eo-dmi-alz-bastion-jumpbox-bastion -VmName eo-dmi-alz-bastion-jumpbox-jumpbox -SubscriptionId <subscription-id>
 #
 #   # Default subscription if omitted:
 #   ffc5e617-7f2d-4ddb-8b57-33fc43989a8c

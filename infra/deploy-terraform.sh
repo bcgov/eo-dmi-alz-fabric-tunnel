@@ -55,7 +55,7 @@ TFVARS_FILE="${INFRA_DIR}/terraform.tfvars"
 BACKEND_RESOURCE_GROUP="${BACKEND_RESOURCE_GROUP:-}"
 BACKEND_STORAGE_ACCOUNT="${BACKEND_STORAGE_ACCOUNT:-}"
 BACKEND_CONTAINER_NAME="${BACKEND_CONTAINER_NAME:-tfstate}"
-BACKEND_STATE_KEY="${BACKEND_STATE_KEY:-ai-hub-deploy-utils/tools/terraform.tfstate}"
+BACKEND_STATE_KEY="${BACKEND_STATE_KEY:-eo-dmi-alz-bastion-jumpbox/tools/terraform.tfstate}"
 
 # Colors for output
 RED='\033[0;31m'

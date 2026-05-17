@@ -1,4 +1,4 @@
-# EO DMI ALZ Fabric Tunnel
+# EO DMI ALZ Bastion Jumpbox
 
 A small **Azure Bastion** access path so developers can reach private Azure endpoints from their workstation — **no VPN, no public IPs, no SSH keys**. Works for both **browsers** (SOCKS5 dynamic proxy) and **native TCP clients** like `psql`, DBeaver, or `redis-cli` (local port forward). Authentication is **Entra ID + MFA** only.
 
@@ -44,18 +44,18 @@ A browser opens for MFA. Only browser-based Entra login is supported.
 
 ```powershell
 .\infra\scripts\bastion-proxy.ps1 `
-  -ResourceGroup eo-dmi-alz-fabric-tunnel-tools `
-  -BastionName   eo-dmi-alz-fabric-tunnel-bastion `
-  -VmName        eo-dmi-alz-fabric-tunnel-jumpbox
+  -ResourceGroup eo-dmi-alz-bastion-jumpbox-tools `
+  -BastionName   eo-dmi-alz-bastion-jumpbox-bastion `
+  -VmName        eo-dmi-alz-bastion-jumpbox-jumpbox
 ```
 
 **macOS / Linux (Bash):**
 
 ```bash
 ./infra/scripts/bastion-proxy.sh \
-  --resource-group eo-dmi-alz-fabric-tunnel-tools \
-  --bastion-name   eo-dmi-alz-fabric-tunnel-bastion \
-  --vm-name        eo-dmi-alz-fabric-tunnel-jumpbox
+  --resource-group eo-dmi-alz-bastion-jumpbox-tools \
+  --bastion-name   eo-dmi-alz-bastion-jumpbox-bastion \
+  --vm-name        eo-dmi-alz-bastion-jumpbox-jumpbox
 ```
 
 The script prints when the SOCKS endpoint is live (default: `localhost:8228`).
@@ -66,10 +66,10 @@ Launch a **separate browser profile** so normal browsing isn't routed through th
 
 ```powershell
 # Edge
-msedge.exe --user-data-dir="$env:TEMP\fabric-tunnel-edge" --proxy-server="socks5://127.0.0.1:8228"
+msedge.exe --user-data-dir="$env:TEMP\bastion-jumpbox-edge" --proxy-server="socks5://127.0.0.1:8228"
 
 # Chrome
-chrome.exe --user-data-dir="$env:TEMP\fabric-tunnel-chrome" --proxy-server="socks5://127.0.0.1:8228"
+chrome.exe --user-data-dir="$env:TEMP\bastion-jumpbox-chrome" --proxy-server="socks5://127.0.0.1:8228"
 ```
 
 Then browse to your private endpoint, for example `https://<account>.dfs.core.windows.net/`.
@@ -203,9 +203,9 @@ Terraform under `infra/` deploys:
 
 | Resource | Name |
 |---|---|
-| Resource group | `eo-dmi-alz-fabric-tunnel-tools` |
-| Bastion host | `eo-dmi-alz-fabric-tunnel-bastion` |
-| Jumpbox VM | `eo-dmi-alz-fabric-tunnel-jumpbox` |
+| Resource group | `eo-dmi-alz-bastion-jumpbox-tools` |
+| Bastion host | `eo-dmi-alz-bastion-jumpbox-bastion` |
+| Jumpbox VM | `eo-dmi-alz-bastion-jumpbox-jumpbox` |
 | Default SOCKS port | `8228` |
 
 ---
@@ -261,15 +261,15 @@ The same jumpbox path can expose private **TCP services** to local desktop tools
 ```powershell
 $vmId = az vm show `
   --subscription    ffc5e617-7f2d-4ddb-8b57-33fc43989a8c `
-  --resource-group  eo-dmi-alz-fabric-tunnel-tools `
-  --name            eo-dmi-alz-fabric-tunnel-jumpbox `
+  --resource-group  eo-dmi-alz-bastion-jumpbox-tools `
+  --name            eo-dmi-alz-bastion-jumpbox-jumpbox `
   --query id `
   --output tsv
 
 az network bastion ssh `
   --subscription       ffc5e617-7f2d-4ddb-8b57-33fc43989a8c `
-  --name               eo-dmi-alz-fabric-tunnel-bastion `
-  --resource-group     eo-dmi-alz-fabric-tunnel-tools `
+  --name               eo-dmi-alz-bastion-jumpbox-bastion `
+  --resource-group     eo-dmi-alz-bastion-jumpbox-tools `
   --target-resource-id $vmId `
   --auth-type          AAD `
   -- -L 127.0.0.1:15432:<postgres-private-hostname-or-ip>:5432 -N -o StrictHostKeyChecking=no
@@ -288,15 +288,15 @@ Once the tunnel is up, point your client at the local listener:
 ```powershell
 $vmId = az vm show `
   --subscription    ffc5e617-7f2d-4ddb-8b57-33fc43989a8c `
-  --resource-group  eo-dmi-alz-fabric-tunnel-tools `
-  --name            eo-dmi-alz-fabric-tunnel-jumpbox `
+  --resource-group  eo-dmi-alz-bastion-jumpbox-tools `
+  --name            eo-dmi-alz-bastion-jumpbox-jumpbox `
   --query id `
   --output tsv
 
 az network bastion ssh `
   --subscription       ffc5e617-7f2d-4ddb-8b57-33fc43989a8c `
-  --name               eo-dmi-alz-fabric-tunnel-bastion `
-  --resource-group     eo-dmi-alz-fabric-tunnel-tools `
+  --name               eo-dmi-alz-bastion-jumpbox-bastion `
+  --resource-group     eo-dmi-alz-bastion-jumpbox-tools `
   --target-resource-id $vmId `
   --auth-type          AAD `
   -- -L 127.0.0.1:16379:<redis-private-hostname-or-ip>:6380 -N -o StrictHostKeyChecking=no
@@ -417,16 +417,16 @@ az account show --query "{name:name, tenantId:tenantId, user:user.name}" --outpu
 
 ```bash
 az vm start \
-  --resource-group eo-dmi-alz-fabric-tunnel-tools \
-  --name           eo-dmi-alz-fabric-tunnel-jumpbox
+  --resource-group eo-dmi-alz-bastion-jumpbox-tools \
+  --name           eo-dmi-alz-bastion-jumpbox-jumpbox
 ```
 
 **Stop and deallocate the VM manually**
 
 ```bash
 az vm deallocate \
-  --resource-group eo-dmi-alz-fabric-tunnel-tools \
-  --name           eo-dmi-alz-fabric-tunnel-jumpbox
+  --resource-group eo-dmi-alz-bastion-jumpbox-tools \
+  --name           eo-dmi-alz-bastion-jumpbox-jumpbox
 ```
 
 **Validate Terraform locally**

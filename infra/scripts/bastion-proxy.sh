@@ -40,10 +40,10 @@
 #
 # EXAMPLES
 #   # Entra ID (AAD) auth:
-#   ./scripts/bastion-proxy.sh -g eo-dmi-alz-fabric-tunnel-tools -b eo-dmi-alz-fabric-tunnel-bastion -v eo-dmi-alz-fabric-tunnel-jumpbox
+#   ./scripts/bastion-proxy.sh -g eo-dmi-alz-bastion-jumpbox-tools -b eo-dmi-alz-bastion-jumpbox-bastion -v eo-dmi-alz-bastion-jumpbox-jumpbox
 #
 #   # Override the active Azure subscription if needed:
-#   ./scripts/bastion-proxy.sh -g eo-dmi-alz-fabric-tunnel-tools -b eo-dmi-alz-fabric-tunnel-bastion -v eo-dmi-alz-fabric-tunnel-jumpbox -s <subscription-id>
+#   ./scripts/bastion-proxy.sh -g eo-dmi-alz-bastion-jumpbox-tools -b eo-dmi-alz-bastion-jumpbox-bastion -v eo-dmi-alz-bastion-jumpbox-jumpbox -s <subscription-id>
 #
 #   # Derive names from Terraform outputs (run from initial-setup/infra/):
 #   ./scripts/bastion-proxy.sh \
