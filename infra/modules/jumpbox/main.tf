@@ -40,89 +40,89 @@ resource "azapi_resource_action" "bootstrap_ssh_keypair" {
   response_export_values = ["publicKey"]
 }
 
-module "jumpbox" {
-  source  = "Azure/avm-res-compute-virtualmachine/azurerm"
-  version = "0.20.0"
+resource "azurerm_network_interface" "jumpbox" {
+  name                = "${var.app_name}-jumpbox-nic"
+  location            = var.location
+  resource_group_name = var.resource_group_name
 
-  enable_telemetry           = false
-  name                       = "${var.app_name}-jumpbox"
-  resource_group_name        = var.resource_group_name
-  location                   = var.location
-  zone                       = null
-  os_type                    = "Linux"
-  sku_size                   = var.vm_size
-  priority                   = "Regular"
-  provision_vm_agent         = true
-  patch_mode                 = "AutomaticByPlatform"
-  patch_assessment_mode      = "AutomaticByPlatform"
-  reboot_setting             = "IfRequired"
-  encryption_at_host_enabled = false
-
-  account_credentials = {
-    password_authentication_disabled = true
-    admin_credentials = {
-      username                           = random_string.admin_username.result
-      ssh_keys                           = [azapi_resource_action.bootstrap_ssh_keypair.output.publicKey]
-      generate_admin_password_or_ssh_key = false
-    }
+  ip_configuration {
+    name                          = "internal"
+    subnet_id                     = var.subnet_id
+    private_ip_address_allocation = "Dynamic"
   }
 
-  managed_identities = {
-    system_assigned = true
+  tags = var.common_tags
+  lifecycle {
+    ignore_changes = [tags]
+  }
+}
+
+resource "azurerm_linux_virtual_machine" "jumpbox" {
+  name                            = "${var.app_name}-jumpbox"
+  resource_group_name             = var.resource_group_name
+  location                        = var.location
+  size                            = var.vm_size
+  admin_username                  = random_string.admin_username.result
+  disable_password_authentication = true
+  priority                        = "Regular"
+  provision_vm_agent              = true
+  patch_mode                      = "AutomaticByPlatform"
+  patch_assessment_mode           = "AutomaticByPlatform"
+  reboot_setting                  = "IfRequired"
+
+  network_interface_ids = [
+    azurerm_network_interface.jumpbox.id,
+  ]
+
+  admin_ssh_key {
+    username   = random_string.admin_username.result
+    public_key = azapi_resource_action.bootstrap_ssh_keypair.output.publicKey
   }
 
-  network_interfaces = {
-    jumpbox = {
-      name = "${var.app_name}-jumpbox-nic"
-      ip_configurations = {
-        internal = {
-          name                          = "internal"
-          private_ip_subnet_resource_id = var.subnet_id
-          private_ip_address_allocation = "Dynamic"
-          is_primary_ipconfiguration    = true
-        }
-      }
-    }
-  }
-
-  os_disk = {
+  os_disk {
     caching              = "ReadWrite"
     storage_account_type = var.os_disk_type
     disk_size_gb         = var.os_disk_size_gb
   }
 
-  source_image_reference = {
+  source_image_reference {
     publisher = "Canonical"
     offer     = "ubuntu-24_04-lts"
     sku       = "server"
     version   = "latest"
   }
 
-  shutdown_schedules = {
-    daily = {
-      enabled               = true
-      daily_recurrence_time = "0200"
-      timezone              = "UTC"
-      notification_settings = {
-        enabled = false
-      }
-      tags = var.common_tags
-    }
+  identity {
+    type = "SystemAssigned"
   }
 
-  extensions = var.enable_entra_login ? {
-    aad_ssh_login = {
-      name                       = "AADSSHLoginForLinux"
-      publisher                  = "Microsoft.Azure.ActiveDirectory"
-      type                       = "AADSSHLoginForLinux"
-      type_handler_version       = "1.0"
-      auto_upgrade_minor_version = true
-      automatic_upgrade_enabled  = true
-      tags                       = var.common_tags
-    }
-  } : {}
+  # Keep platform guest patching and Update Manager assessment enabled to meet
+  # ALZ guardrail expectations for VM compliance visibility.
 
   tags = var.common_tags
+  lifecycle {
+    ignore_changes = [
+      tags,
+      identity
+    ]
+  }
+}
+
+resource "azurerm_dev_test_global_vm_shutdown_schedule" "jumpbox" {
+  virtual_machine_id    = azurerm_linux_virtual_machine.jumpbox.id
+  location              = var.location
+  enabled               = true
+  daily_recurrence_time = "0200" # 7 PM Pacific with the repo's +7 offset becomes 02:00 UTC the next day
+  timezone              = "UTC"
+
+  notification_settings {
+    enabled = false
+  }
+
+  tags = var.common_tags
+  lifecycle {
+    ignore_changes = [tags]
+  }
 }
 
 resource "azurerm_automation_account" "jumpbox" {
@@ -320,8 +320,24 @@ resource "azurerm_role_assignment" "automation_bastion_subnet_network_contributo
 }
 
 resource "azurerm_role_assignment" "automation_vm_contributor" {
-  scope                = module.jumpbox.resource_id
+  scope                = azurerm_linux_virtual_machine.jumpbox.id
   role_definition_name = "Virtual Machine Contributor"
   principal_id         = azurerm_automation_account.jumpbox.identity[0].principal_id
+}
+
+resource "azurerm_virtual_machine_extension" "aad_ssh_login" {
+  count = var.enable_entra_login ? 1 : 0
+
+  name                       = "AADSSHLoginForLinux"
+  virtual_machine_id         = azurerm_linux_virtual_machine.jumpbox.id
+  publisher                  = "Microsoft.Azure.ActiveDirectory"
+  type                       = "AADSSHLoginForLinux"
+  type_handler_version       = "1.0"
+  auto_upgrade_minor_version = true
+
+  tags = var.common_tags
+  lifecycle {
+    ignore_changes = [tags]
+  }
 }
 

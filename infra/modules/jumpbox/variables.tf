@@ -42,7 +42,7 @@ variable "vm_size" {
 variable "os_disk_type" {
   description = "Storage account type for the OS disk"
   type        = string
-  default     = "StandardSSD_LRS" # Avoid retired Standard HDD OS disks while keeping cost moderate
+  default     = "Standard_LRS" # Standard storage for cost optimization
 }
 
 variable "os_disk_size_gb" {

@@ -4,12 +4,12 @@
 
 output "bastion_resource_id" {
   description = "Resource ID of the Azure Bastion host"
-  value       = module.main.resource_id
+  value       = azurerm_bastion_host.main.id
 }
 
 output "bastion_fqdn" {
   description = "FQDN of the Bastion host"
-  value       = module.main.dns_name
+  value       = azurerm_bastion_host.main.dns_name
 }
 
 output "public_ip_address" {

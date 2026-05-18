@@ -172,12 +172,6 @@ variable "vm_size" {
   default     = "Standard_B2als_v2"
 }
 
-variable "os_disk_type" {
-  description = "Storage account type for the jumpbox OS disk. Standard SSD avoids the Standard HDD OS disk retirement warning."
-  type        = string
-  default     = "StandardSSD_LRS"
-}
-
 ### -----------------------------------------------------------------------------
 ### Log Analytics Variables
 ### -----------------------------------------------------------------------------

@@ -149,11 +149,6 @@ flowchart TD
 
 Terraform under `infra/` deploys:
 
-The Bastion host and jumpbox VM are implemented through Azure Verified Modules
-(AVM). That keeps the repo-specific Terraform thinner and lowers sustainment
-overhead because the core module implementations are maintained upstream by
-Microsoft.
-
 | Component | Purpose |
 |---|---|
 | Azure Bastion **Standard** | Native client tunneling for AAD-authenticated SSH |
