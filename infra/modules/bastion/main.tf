@@ -47,3 +47,13 @@ resource "azurerm_bastion_host" "main" {
     ignore_changes = [tags]
   }
 }
+
+resource "azurerm_monitor_diagnostic_setting" "bastion_audit" {
+  name                       = "${var.app_name}-bastion-audit"
+  target_resource_id         = azurerm_bastion_host.main.id
+  log_analytics_workspace_id = var.log_analytics_workspace_id
+
+  enabled_log {
+    category = "BastionAuditLogs"
+  }
+}

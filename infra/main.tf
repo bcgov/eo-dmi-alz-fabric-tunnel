@@ -46,6 +46,7 @@ module "bastion" {
   common_tags                       = var.common_tags
   location                          = var.location
   resource_group_name               = azurerm_resource_group.main.name
+  log_analytics_workspace_id        = module.monitoring.log_analytics_workspace_id
   bastion_subnet_id                 = module.network.bastion_subnet_id
   bastion_sku                       = var.bastion_sku
   tunneling_enabled                 = var.bastion_tunneling_enabled
@@ -70,6 +71,7 @@ module "jumpbox" {
   common_tags                               = var.common_tags
   location                                  = var.location
   resource_group_name                       = azurerm_resource_group.main.name
+  vm_size                                   = var.vm_size
   subnet_id                                 = module.network.jumpbox_subnet_id
   enable_entra_login                        = var.enable_entra_login
   enable_bastion                            = var.enable_bastion

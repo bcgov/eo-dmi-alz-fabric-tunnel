@@ -234,6 +234,23 @@ function Write-ListenerSnapshot {
     }
 }
 
+function Write-CommandLogTail {
+    param(
+        [Parameter(Mandatory)]
+        [string]$LogPath,
+
+        [int]$TailLines = 40
+    )
+
+    if (-not (Test-Path $LogPath)) {
+        Write-Warn "No Bastion command log was captured at $LogPath"
+        return
+    }
+
+    Write-Warn "Recent Azure Bastion SSH output from $LogPath:"
+    Get-Content -Path $LogPath -Tail $TailLines | ForEach-Object { Write-Host $_ }
+}
+
 # ── Prerequisite checks ───────────────────────────────────────────────────────
 
 Write-Info 'Checking prerequisites...'
@@ -420,11 +437,10 @@ Write-Host ''
 # Arguments after '--' are passed directly to the underlying SSH client:
 #   -D  SOCKS5 dynamic port forwarding on the chosen local IPv4 loopback port
 #   -N  do not execute a remote command (keep connection open for forwarding)
-#   -q  quiet mode (suppress banners and warnings)
 #   StrictHostKeyChecking=no   Bastion already provides mutual auth
 #   ServerAliveInterval/Count  keep the tunnel alive through idle periods
 
-$sshOptsStr = "-D 127.0.0.1:$socksPort -N -q -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -o ServerAliveCountMax=3"
+$sshOptsStr = "-D 127.0.0.1:$socksPort -N -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -o ServerAliveCountMax=3"
 
 $azCmdLine = "network bastion ssh --name `"$BastionName`" --resource-group `"$ResourceGroup`" --target-resource-id `"$vmId`" --auth-type AAD -- $sshOptsStr"
 
@@ -434,9 +450,12 @@ $azCmdLine = "network bastion ssh --name `"$BastionName`" --resource-group `"$Re
 # (which lives in a path with spaces) is passed as an argument to /c.
 
 $tempBat = [System.IO.Path]::ChangeExtension([System.IO.Path]::GetTempFileName(), '.bat')
-"@az $azCmdLine" | Set-Content -Path $tempBat -Encoding ASCII
+$commandLog = [System.IO.Path]::ChangeExtension([System.IO.Path]::GetTempFileName(), '.log')
+"@echo off`r`n@az $azCmdLine 1>>`"$commandLog`" 2>>&1`r`ntype `"$commandLog`"`r
+exit /b %ERRORLEVEL%" | Set-Content -Path $tempBat -Encoding ASCII
 
 Write-Info "Prepared Azure Bastion SSH command file: $tempBat"
+Write-Info "Capturing Azure Bastion SSH output to: $commandLog"
 Write-Info "Launching Azure Bastion SSH tunnel for VM resource ID: $vmId"
 Write-Info "SSH forwarding arguments: $sshOptsStr"
 
@@ -552,6 +571,7 @@ finally {
     if (-not $tunnelReady) {
         Write-Err "Bastion SSH exited before the SOCKS5 proxy became ready on localhost:$socksPort."
         Write-Err 'No listener was created. The Azure CLI Bastion/SSH handoff failed before the tunnel came up.'
+        Write-CommandLogTail -LogPath $commandLog
         if ($null -ne $exitCode) {
             Write-Warn "Bastion SSH process exit code: $exitCode"
         }
@@ -562,4 +582,6 @@ finally {
     else {
         Write-Warn "SOCKS5 proxy exited with code $exitCode."
     }
+
+    Remove-Item $commandLog -Force -ErrorAction SilentlyContinue
 }

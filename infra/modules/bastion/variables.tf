@@ -32,6 +32,12 @@ variable "common_tags" {
   nullable    = false
 }
 
+variable "log_analytics_workspace_id" {
+  description = "Resource ID of the Log Analytics workspace that receives Bastion audit logs."
+  type        = string
+  nullable    = false
+}
+
 variable "bastion_sku" {
   description = "SKU for Azure Bastion (Basic or Standard)"
   type        = string

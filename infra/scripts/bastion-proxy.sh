@@ -411,12 +411,11 @@ echo ""
 #
 # -D  SOCKS5 dynamic port forwarding on the chosen local IPv4 loopback port
 # -N  do not execute a remote command (keep connection open for forwarding)
-# -q  quiet mode (suppress banners and warnings)
 # StrictHostKeyChecking=no   acceptable here: Bastion already provides mutual
 #                            auth; the VM has no public surface to MITM
 # ServerAliveInterval/Count  keep the tunnel alive through idle periods
 
-SSH_OPTS="-D 127.0.0.1:${SOCKS_PORT} -N -q \
+SSH_OPTS="-D 127.0.0.1:${SOCKS_PORT} -N \
   -o StrictHostKeyChecking=no \
   -o ServerAliveInterval=30 \
   -o ServerAliveCountMax=3"
@@ -469,12 +468,26 @@ log_listener_snapshot() {
   fi
 }
 
+log_command_tail() {
+  local log_path=$1
+  local tail_lines=${2:-40}
+
+  if [[ ! -f "$log_path" ]]; then
+    warn "No Bastion command log was captured at ${log_path}"
+    return
+  fi
+
+  warn "Recent Azure Bastion SSH output from ${log_path}:"
+  tail -n "$tail_lines" "$log_path"
+}
+
 # ── Cleanup handler ──────────────────────────────────────────────────────────────────────────────
 
 TIMER_PID=""
 AZ_PID=""
 AZ_EXIT_CODE=""
 TUNNEL_READY=false
+COMMAND_LOG=""
 
 cleanup() {
   local exit_code=$?
@@ -484,12 +497,15 @@ cleanup() {
   if [[ "$TUNNEL_READY" != "true" ]]; then
     err "Bastion SSH exited before the SOCKS5 proxy became ready on localhost:${SOCKS_PORT}."
     err "No listener was created. The Azure CLI Bastion/SSH handoff failed before the tunnel came up."
+    [[ -n "${COMMAND_LOG}" ]] && log_command_tail "$COMMAND_LOG"
     [[ -n "$AZ_EXIT_CODE" ]] && warn "Bastion SSH process exit code: ${AZ_EXIT_CODE}."
   elif [[ $exit_code -eq 0 || $exit_code -eq 130 ]]; then
     ok "SOCKS5 proxy stopped."
   else
     warn "SOCKS5 proxy exited with code $exit_code."
   fi
+
+  [[ -n "${COMMAND_LOG}" ]] && rm -f "${COMMAND_LOG}"
 }
 trap cleanup EXIT
 
@@ -506,6 +522,8 @@ info "Session expiry timer started with PID ${TIMER_PID}."
 # Git Bash/MSYS rewrites arguments that look like Unix paths when calling
 # Windows executables. Azure resource IDs begin with /subscriptions/... and
 # must be passed through unchanged.
+COMMAND_LOG=$(mktemp "${TMPDIR:-/tmp}/bastion-proxy.XXXXXX.log")
+info "Capturing Azure Bastion SSH output to: ${COMMAND_LOG}"
 info "Launching Azure Bastion SSH tunnel for VM resource ID: ${VM_ID}"
 info "SSH forwarding arguments: ${SSH_OPTS}"
 MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' az network bastion ssh \
@@ -513,7 +531,9 @@ MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' az network bastion ssh \
   --resource-group "$RESOURCE_GROUP" \
   --target-resource-id "$VM_ID" \
   --auth-type "AAD" \
-  -- $SSH_OPTS &
+  -- $SSH_OPTS \
+  > >(tee -a "$COMMAND_LOG") \
+  2> >(tee -a "$COMMAND_LOG" >&2) &
 AZ_PID=$!
 info "Azure Bastion SSH process started with PID ${AZ_PID}. Waiting for SOCKS listener on localhost:${SOCKS_PORT}..."
 
