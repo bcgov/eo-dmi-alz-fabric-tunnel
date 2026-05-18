@@ -7,6 +7,7 @@ testing by allowing environment variables to override the rendered defaults.
 
 import json
 import os
+import socket
 import sys
 import time
 import urllib.error
@@ -63,10 +64,99 @@ PUBLIC_IP_DDOS_PROTECTION_MODE = os.environ.get(
 TAGS = json.loads(os.environ.get("TAGS_JSON", r"""${common_tags_json}"""))
 PUBLIC_IP_API_VERSION = "2023-09-01"
 BASTION_API_VERSION = "2023-09-01"
+TOKEN_REQUEST_TIMEOUT_SECONDS = int(
+    os.environ.get("TOKEN_REQUEST_TIMEOUT_SECONDS", "30")
+)
+ARM_REQUEST_TIMEOUT_SECONDS = int(os.environ.get("ARM_REQUEST_TIMEOUT_SECONDS", "60"))
+ARM_RETRY_ATTEMPTS = int(os.environ.get("ARM_RETRY_ATTEMPTS", "5"))
+ARM_RETRY_BASE_DELAY_SECONDS = int(os.environ.get("ARM_RETRY_BASE_DELAY_SECONDS", "5"))
+ARM_RETRY_MAX_DELAY_SECONDS = int(os.environ.get("ARM_RETRY_MAX_DELAY_SECONDS", "60"))
+POLL_INTERVAL_SECONDS = int(os.environ.get("ARM_POLL_INTERVAL_SECONDS", "20"))
+RETRYABLE_HTTP_STATUS_CODES = {408, 409, 423, 429, 500, 502, 503, 504}
 
 PUBLIC_IP_URL = f"https://management.azure.com/subscriptions/{SUBSCRIPTION_ID}/resourceGroups/{RESOURCE_GROUP}/providers/Microsoft.Network/publicIPAddresses/{PUBLIC_IP_NAME}?api-version={PUBLIC_IP_API_VERSION}"
 BASTION_URL = f"https://management.azure.com/subscriptions/{SUBSCRIPTION_ID}/resourceGroups/{RESOURCE_GROUP}/providers/Microsoft.Network/bastionHosts/{BASTION_NAME}?api-version={BASTION_API_VERSION}"
 PUBLIC_IP_ID = f"/subscriptions/{SUBSCRIPTION_ID}/resourceGroups/{RESOURCE_GROUP}/providers/Microsoft.Network/publicIPAddresses/{PUBLIC_IP_NAME}"
+
+
+def get_retry_delay_seconds(attempt_number, retry_after_header=None):
+    """Return a bounded retry delay, preferring Retry-After when present."""
+
+    if retry_after_header:
+        try:
+            return max(1, min(int(retry_after_header), ARM_RETRY_MAX_DELAY_SECONDS))
+        except ValueError:
+            pass
+
+    return min(
+        ARM_RETRY_BASE_DELAY_SECONDS * (2**attempt_number),
+        ARM_RETRY_MAX_DELAY_SECONDS,
+    )
+
+
+def perform_request(request, timeout_seconds):
+    """Execute a single HTTP request and return status, body, and headers."""
+
+    try:
+        response = urllib.request.urlopen(request, timeout=timeout_seconds)
+        response_body = response.read().decode() if response.length != 0 else ""
+        return response.status, response_body, response.headers
+    except urllib.error.HTTPError as exc:
+        response_body = exc.read().decode() if exc.fp else ""
+        return exc.code, response_body, exc.headers
+
+
+def request_with_retry(request, timeout_seconds, action_name):
+    """Retry recoverable HTTP and network errors with bounded backoff."""
+
+    for attempt_number in range(ARM_RETRY_ATTEMPTS + 1):
+        try:
+            status_code, response_body, response_headers = perform_request(
+                request, timeout_seconds
+            )
+        except (
+            urllib.error.URLError,
+            TimeoutError,
+            ConnectionResetError,
+            socket.timeout,
+        ) as exc:
+            if attempt_number >= ARM_RETRY_ATTEMPTS:
+                raise Exception(
+                    f"{action_name} failed after {ARM_RETRY_ATTEMPTS + 1} attempts: {exc}"
+                ) from exc
+
+            delay_seconds = get_retry_delay_seconds(attempt_number)
+            print(
+                f"{action_name} hit a recoverable network error ({exc}); retrying in {delay_seconds}s"
+            )
+            time.sleep(delay_seconds)
+            continue
+
+        if status_code not in RETRYABLE_HTTP_STATUS_CODES:
+            return status_code, response_body
+
+        if attempt_number >= ARM_RETRY_ATTEMPTS:
+            return status_code, response_body
+
+        delay_seconds = get_retry_delay_seconds(
+            attempt_number, response_headers.get("Retry-After")
+        )
+        print(
+            f"{action_name} returned recoverable HTTP {status_code}; retrying in {delay_seconds}s"
+        )
+        time.sleep(delay_seconds)
+
+    raise Exception(f"{action_name} exhausted retry handling unexpectedly")
+
+
+def get_provisioning_state(response_body):
+    """Extract the ARM provisioning state from a JSON response body."""
+
+    if not response_body:
+        return None
+
+    body = json.loads(response_body)
+    return body.get("properties", {}).get("provisioningState")
 
 
 def get_automation_token():
@@ -85,8 +175,13 @@ def get_automation_token():
     request.add_header("X-IDENTITY-HEADER", identity_header)
     request.add_header("Metadata", "true")
 
-    response = urllib.request.urlopen(request, timeout=30)
-    data = json.loads(response.read().decode())
+    status_code, response_body = request_with_retry(
+        request,
+        TOKEN_REQUEST_TIMEOUT_SECONDS,
+        "Fetch automation token",
+    )
+    ensure_success(status_code, response_body, {200}, "Fetch automation token")
+    data = json.loads(response_body)
     return data["access_token"]
 
 
@@ -98,13 +193,8 @@ def arm_request(method, url, access_token, body=None):
     request.add_header("Authorization", f"Bearer {access_token}")
     request.add_header("Content-Type", "application/json")
 
-    try:
-        response = urllib.request.urlopen(request, timeout=60)
-        response_body = response.read().decode() if response.length != 0 else ""
-        return response.status, response_body
-    except urllib.error.HTTPError as exc:
-        response_body = exc.read().decode() if exc.fp else ""
-        return exc.code, response_body
+    action_name = f"{method} {url.split('?')[0]}"
+    return request_with_retry(request, ARM_REQUEST_TIMEOUT_SECONDS, action_name)
 
 
 def ensure_success(status_code, response_body, allowed_codes, action_name):
@@ -132,12 +222,20 @@ def wait_for_provisioning_state(
                 print(f"{resource_name} deletion confirmed")
                 return
         elif status_code == 200:
-            body = json.loads(response_body) if response_body else {}
-            provisioning_state = body.get("properties", {}).get("provisioningState")
+            provisioning_state = get_provisioning_state(response_body)
             print(f"{resource_name} provisioningState={provisioning_state}")
+            if provisioning_state == "Failed":
+                raise Exception(
+                    f"{resource_name} entered provisioningState=Failed: {response_body}"
+                )
             if provisioning_state == desired_state:
                 return
-        time.sleep(20)
+        elif status_code not in {200, 404}:
+            raise Exception(
+                f"Unexpected GET response while polling {resource_name}: HTTP {status_code} - {response_body}"
+            )
+
+        time.sleep(POLL_INTERVAL_SECONDS)
 
     if deleted:
         raise Exception(f"Timed out waiting for {resource_name} to be deleted")
@@ -148,15 +246,6 @@ def wait_for_provisioning_state(
 
 def ensure_public_ip(access_token):
     """Create the Bastion public IP if it does not already exist."""
-
-    status_code, response_body = arm_request("GET", PUBLIC_IP_URL, access_token)
-    if status_code == 200:
-        print("Public IP already exists")
-        return
-    if status_code != 404:
-        raise Exception(
-            f"Failed to query Public IP: HTTP {status_code} - {response_body}"
-        )
 
     payload = {
         "location": LOCATION,
@@ -170,24 +259,49 @@ def ensure_public_ip(access_token):
         "tags": TAGS,
     }
 
-    status_code, response_body = arm_request(
-        "PUT", PUBLIC_IP_URL, access_token, payload
-    )
-    ensure_success(status_code, response_body, {200, 201}, "Create Public IP")
-    wait_for_provisioning_state(PUBLIC_IP_URL, access_token, "Public IP")
+    while True:
+        status_code, response_body = arm_request("GET", PUBLIC_IP_URL, access_token)
+        if status_code == 200:
+            provisioning_state = get_provisioning_state(response_body)
+            if provisioning_state == "Succeeded":
+                print("Public IP already exists")
+                return
+
+            if provisioning_state == "Deleting":
+                print(
+                    "Public IP deletion already in progress; waiting for it to finish"
+                )
+                wait_for_provisioning_state(
+                    PUBLIC_IP_URL,
+                    access_token,
+                    "Public IP",
+                    deleted=True,
+                )
+                continue
+
+            if provisioning_state in {"Creating", "Updating"}:
+                print("Public IP already exists and is still provisioning")
+                wait_for_provisioning_state(PUBLIC_IP_URL, access_token, "Public IP")
+                return
+
+            print(
+                f"Public IP exists with provisioningState={provisioning_state}; reconciling desired configuration"
+            )
+        elif status_code != 404:
+            raise Exception(
+                f"Failed to query Public IP: HTTP {status_code} - {response_body}"
+            )
+
+        status_code, response_body = arm_request(
+            "PUT", PUBLIC_IP_URL, access_token, payload
+        )
+        ensure_success(status_code, response_body, {200, 201, 202}, "Create Public IP")
+        wait_for_provisioning_state(PUBLIC_IP_URL, access_token, "Public IP")
+        return
 
 
 def ensure_bastion(access_token):
     """Create the Bastion host if it does not already exist."""
-
-    status_code, response_body = arm_request("GET", BASTION_URL, access_token)
-    if status_code == 200:
-        print("Bastion host already exists")
-        return
-    if status_code != 404:
-        raise Exception(
-            f"Failed to query Bastion host: HTTP {status_code} - {response_body}"
-        )
 
     payload = {
         "location": LOCATION,
@@ -213,9 +327,50 @@ def ensure_bastion(access_token):
         "tags": TAGS,
     }
 
-    status_code, response_body = arm_request("PUT", BASTION_URL, access_token, payload)
-    ensure_success(status_code, response_body, {200, 201}, "Create Bastion host")
-    wait_for_provisioning_state(BASTION_URL, access_token, "Bastion host")
+    while True:
+        status_code, response_body = arm_request("GET", BASTION_URL, access_token)
+        if status_code == 200:
+            provisioning_state = get_provisioning_state(response_body)
+            if provisioning_state == "Succeeded":
+                print("Bastion host already exists")
+                return
+
+            if provisioning_state == "Deleting":
+                print(
+                    "Bastion host deletion already in progress; waiting for it to finish"
+                )
+                wait_for_provisioning_state(
+                    BASTION_URL,
+                    access_token,
+                    "Bastion host",
+                    deleted=True,
+                )
+                continue
+
+            if provisioning_state in {"Creating", "Updating"}:
+                print("Bastion host already exists and is still provisioning")
+                wait_for_provisioning_state(BASTION_URL, access_token, "Bastion host")
+                return
+
+            print(
+                f"Bastion host exists with provisioningState={provisioning_state}; reconciling desired configuration"
+            )
+        elif status_code != 404:
+            raise Exception(
+                f"Failed to query Bastion host: HTTP {status_code} - {response_body}"
+            )
+
+        status_code, response_body = arm_request(
+            "PUT", BASTION_URL, access_token, payload
+        )
+        ensure_success(
+            status_code,
+            response_body,
+            {200, 201, 202},
+            "Create Bastion host",
+        )
+        wait_for_provisioning_state(BASTION_URL, access_token, "Bastion host")
+        return
 
 
 def main():

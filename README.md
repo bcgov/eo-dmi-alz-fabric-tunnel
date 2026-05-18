@@ -487,6 +487,13 @@ stateDiagram-v2
 > The optional Bastion delete/recreate automation uses `02:00 UTC` for delete and
 > `15:00 UTC` for create.
 
+> [!NOTE]
+> The Automation Python runbooks in this repo are designed to be **idempotent** and
+> **resilient**. Re-running the VM start or optional Bastion create/delete jobs will
+> converge on the desired state when the resource is already starting, running,
+> creating, deleting, or already absent, and the scripts retry recoverable Azure
+> control-plane and transient network failures before giving up.
+
 ### Cost notes
 
 | Resource | Billing characteristic |

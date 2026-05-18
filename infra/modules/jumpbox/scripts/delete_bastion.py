@@ -7,6 +7,7 @@ testing by allowing environment variables to override the rendered defaults.
 
 import json
 import os
+import socket
 import sys
 import time
 import urllib.error
@@ -19,9 +20,98 @@ BASTION_NAME = os.environ.get("BASTION_NAME", "${app_name}-bastion")
 PUBLIC_IP_NAME = os.environ.get("PUBLIC_IP_NAME", "${app_name}-bastion-pip")
 PUBLIC_IP_API_VERSION = "2023-09-01"
 BASTION_API_VERSION = "2023-09-01"
+TOKEN_REQUEST_TIMEOUT_SECONDS = int(
+    os.environ.get("TOKEN_REQUEST_TIMEOUT_SECONDS", "30")
+)
+ARM_REQUEST_TIMEOUT_SECONDS = int(os.environ.get("ARM_REQUEST_TIMEOUT_SECONDS", "60"))
+ARM_RETRY_ATTEMPTS = int(os.environ.get("ARM_RETRY_ATTEMPTS", "5"))
+ARM_RETRY_BASE_DELAY_SECONDS = int(os.environ.get("ARM_RETRY_BASE_DELAY_SECONDS", "5"))
+ARM_RETRY_MAX_DELAY_SECONDS = int(os.environ.get("ARM_RETRY_MAX_DELAY_SECONDS", "60"))
+POLL_INTERVAL_SECONDS = int(os.environ.get("ARM_POLL_INTERVAL_SECONDS", "20"))
+RETRYABLE_HTTP_STATUS_CODES = {408, 409, 423, 429, 500, 502, 503, 504}
 
 PUBLIC_IP_URL = f"https://management.azure.com/subscriptions/{SUBSCRIPTION_ID}/resourceGroups/{RESOURCE_GROUP}/providers/Microsoft.Network/publicIPAddresses/{PUBLIC_IP_NAME}?api-version={PUBLIC_IP_API_VERSION}"
 BASTION_URL = f"https://management.azure.com/subscriptions/{SUBSCRIPTION_ID}/resourceGroups/{RESOURCE_GROUP}/providers/Microsoft.Network/bastionHosts/{BASTION_NAME}?api-version={BASTION_API_VERSION}"
+
+
+def get_retry_delay_seconds(attempt_number, retry_after_header=None):
+    """Return a bounded retry delay, preferring Retry-After when present."""
+
+    if retry_after_header:
+        try:
+            return max(1, min(int(retry_after_header), ARM_RETRY_MAX_DELAY_SECONDS))
+        except ValueError:
+            pass
+
+    return min(
+        ARM_RETRY_BASE_DELAY_SECONDS * (2**attempt_number),
+        ARM_RETRY_MAX_DELAY_SECONDS,
+    )
+
+
+def perform_request(request, timeout_seconds):
+    """Execute a single HTTP request and return status, body, and headers."""
+
+    try:
+        response = urllib.request.urlopen(request, timeout=timeout_seconds)
+        response_body = response.read().decode() if response.length != 0 else ""
+        return response.status, response_body, response.headers
+    except urllib.error.HTTPError as exc:
+        response_body = exc.read().decode() if exc.fp else ""
+        return exc.code, response_body, exc.headers
+
+
+def request_with_retry(request, timeout_seconds, action_name):
+    """Retry recoverable HTTP and network errors with bounded backoff."""
+
+    for attempt_number in range(ARM_RETRY_ATTEMPTS + 1):
+        try:
+            status_code, response_body, response_headers = perform_request(
+                request, timeout_seconds
+            )
+        except (
+            urllib.error.URLError,
+            TimeoutError,
+            ConnectionResetError,
+            socket.timeout,
+        ) as exc:
+            if attempt_number >= ARM_RETRY_ATTEMPTS:
+                raise Exception(
+                    f"{action_name} failed after {ARM_RETRY_ATTEMPTS + 1} attempts: {exc}"
+                ) from exc
+
+            delay_seconds = get_retry_delay_seconds(attempt_number)
+            print(
+                f"{action_name} hit a recoverable network error ({exc}); retrying in {delay_seconds}s"
+            )
+            time.sleep(delay_seconds)
+            continue
+
+        if status_code not in RETRYABLE_HTTP_STATUS_CODES:
+            return status_code, response_body
+
+        if attempt_number >= ARM_RETRY_ATTEMPTS:
+            return status_code, response_body
+
+        delay_seconds = get_retry_delay_seconds(
+            attempt_number, response_headers.get("Retry-After")
+        )
+        print(
+            f"{action_name} returned recoverable HTTP {status_code}; retrying in {delay_seconds}s"
+        )
+        time.sleep(delay_seconds)
+
+    raise Exception(f"{action_name} exhausted retry handling unexpectedly")
+
+
+def get_provisioning_state(response_body):
+    """Extract the ARM provisioning state from a JSON response body."""
+
+    if not response_body:
+        return None
+
+    body = json.loads(response_body)
+    return body.get("properties", {}).get("provisioningState")
 
 
 def get_automation_token():
@@ -40,8 +130,13 @@ def get_automation_token():
     request.add_header("X-IDENTITY-HEADER", identity_header)
     request.add_header("Metadata", "true")
 
-    response = urllib.request.urlopen(request, timeout=30)
-    data = json.loads(response.read().decode())
+    status_code, response_body = request_with_retry(
+        request,
+        TOKEN_REQUEST_TIMEOUT_SECONDS,
+        "Fetch automation token",
+    )
+    ensure_success(status_code, response_body, {200}, "Fetch automation token")
+    data = json.loads(response_body)
     return data["access_token"]
 
 
@@ -53,13 +148,8 @@ def arm_request(method, url, access_token, body=None):
     request.add_header("Authorization", f"Bearer {access_token}")
     request.add_header("Content-Type", "application/json")
 
-    try:
-        response = urllib.request.urlopen(request, timeout=60)
-        response_body = response.read().decode() if response.length != 0 else ""
-        return response.status, response_body
-    except urllib.error.HTTPError as exc:
-        response_body = exc.read().decode() if exc.fp else ""
-        return exc.code, response_body
+    action_name = f"{method} {url.split('?')[0]}"
+    return request_with_retry(request, ARM_REQUEST_TIMEOUT_SECONDS, action_name)
 
 
 def ensure_success(status_code, response_body, allowed_codes, action_name):
@@ -82,7 +172,10 @@ def wait_for_deletion(url, access_token, resource_name, timeout_seconds=900):
             raise Exception(
                 f"Unexpected GET response while waiting for {resource_name} deletion: HTTP {status_code} - {response_body}"
             )
-        time.sleep(20)
+        provisioning_state = get_provisioning_state(response_body)
+        if provisioning_state:
+            print(f"{resource_name} provisioningState={provisioning_state}")
+        time.sleep(POLL_INTERVAL_SECONDS)
 
     raise Exception(f"Timed out waiting for {resource_name} to be deleted")
 
@@ -99,9 +192,15 @@ def delete_if_present(url, access_token, resource_name):
             f"Failed to query {resource_name}: HTTP {status_code} - {response_body}"
         )
 
+    provisioning_state = get_provisioning_state(response_body)
+    if provisioning_state == "Deleting":
+        print(f"{resource_name} deletion already in progress")
+        wait_for_deletion(url, access_token, resource_name)
+        return
+
     status_code, response_body = arm_request("DELETE", url, access_token)
     ensure_success(
-        status_code, response_body, {200, 202, 204}, f"Delete {resource_name}"
+        status_code, response_body, {200, 202, 204, 404}, f"Delete {resource_name}"
     )
     wait_for_deletion(url, access_token, resource_name)
 

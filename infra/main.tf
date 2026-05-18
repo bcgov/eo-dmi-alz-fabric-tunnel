@@ -72,6 +72,8 @@ module "jumpbox" {
   location                                  = var.location
   resource_group_name                       = azurerm_resource_group.main.name
   vm_size                                   = var.vm_size
+  os_disk_type                              = var.os_disk_type
+  os_disk_size_gb                           = var.os_disk_size_gb
   subnet_id                                 = module.network.jumpbox_subnet_id
   enable_entra_login                        = var.enable_entra_login
   enable_bastion                            = var.enable_bastion
