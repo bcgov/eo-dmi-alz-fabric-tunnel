@@ -235,6 +235,7 @@ az extension add --name bastion
 az extension add --name ssh
 ```
 
+<a id="azure-cli-python-runtime-tip"></a>
 > [!TIP]
 > If `az extension add` runs into `pip` issues, make sure you point the Python path at the
 > Azure CLI runtime itself instead of a different Python install.
@@ -322,6 +323,9 @@ The script prints when the SOCKS endpoint is live (default `localhost:8228`).
 
 These variants download the script to a temp file, execute it, then delete it. Replace `main`
 with a tag or commit SHA if you want a fixed script version.
+
+If the script needs to install Azure CLI extensions and `az extension add` hits `pip` errors,
+see the [Azure CLI Python runtime tip](#azure-cli-python-runtime-tip) before retrying.
 
 **Bash:**
 
