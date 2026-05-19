@@ -84,10 +84,13 @@ function Invoke-AzProbe {
     $script:ErrorActionPreference = 'Continue'
 
     try {
-        $output = & $Command 2>$null
+        $output = & $Command 2>&1
+        $exitCode = if ($null -ne $LASTEXITCODE) { $LASTEXITCODE } else { 0 }
+
         return [pscustomobject]@{
-            Output   = @($output)
-            ExitCode = $LASTEXITCODE
+            Output      = @($output)
+            ErrorOutput = @()
+            ExitCode    = $exitCode
         }
     }
     finally {
@@ -106,11 +109,33 @@ function Get-AzProbeText {
 
     $result = Invoke-AzProbe -Command $Command
     $text = ($result.Output | Where-Object { $null -ne $_ } | ForEach-Object { $_.ToString().TrimEnd() }) -join [Environment]::NewLine
+    $errorText = ($result.ErrorOutput | Where-Object { $null -ne $_ } | ForEach-Object { $_.ToString().TrimEnd() }) -join [Environment]::NewLine
 
     return [pscustomobject]@{
-        Output   = $text.Trim()
-        ExitCode = $result.ExitCode
+        Output      = $text.Trim()
+        ErrorOutput = $errorText.Trim()
+        ExitCode    = $result.ExitCode
     }
+}
+
+function Get-AzFailureText {
+    param(
+        [Parameter(Mandatory)]
+        $ProbeResult
+    )
+
+    $messages = @()
+    foreach ($candidate in @($ProbeResult.ErrorOutput, $ProbeResult.Output)) {
+        if (-not [string]::IsNullOrWhiteSpace($candidate) -and $candidate.Trim() -notin $messages) {
+            $messages += $candidate.Trim()
+        }
+    }
+
+    if ($messages.Count -gt 0) {
+        return ($messages -join [Environment]::NewLine)
+    }
+
+    return "Azure CLI exited with code $($ProbeResult.ExitCode)."
 }
 
 function Get-ExecutableCommandPath {
@@ -239,14 +264,99 @@ function Install-AzExtensionIfMissing {
         return
     }
 
+    if ($extensionProbe.ExitCode -ne 0) {
+        Write-Err "Azure CLI could not inspect installed extensions in '$env:AZURE_EXTENSION_DIR'."
+        Write-Err (Get-AzFailureText -ProbeResult $extensionProbe)
+        exit 1
+    }
+
     Write-Info "Installing Azure CLI '$ExtensionName' extension..."
-    az extension add --name $ExtensionName --yes --only-show-errors 2>&1 | Out-Null
+    $installResult = Get-AzProbeText -Command {
+        az extension add --name $ExtensionName --yes --only-show-errors
+    }
+    if ($installResult.ExitCode -ne 0) {
+        Write-Err "Azure CLI '$ExtensionName' extension could not be installed."
+        Write-Err (Get-AzFailureText -ProbeResult $installResult)
+        exit 1
+    }
 
     $extensionProbe = Get-AzProbeText -Command {
         az extension list --only-show-errors --query "[?name=='$ExtensionName'].name | [0]" --output tsv
     }
-    if ($extensionProbe.ExitCode -ne 0 -or $extensionProbe.Output -ne $ExtensionName) {
+    if ($extensionProbe.ExitCode -ne 0) {
+        Write-Err "Azure CLI '$ExtensionName' extension could not be validated after installation."
+        Write-Err (Get-AzFailureText -ProbeResult $extensionProbe)
+        exit 1
+    }
+
+    if ($extensionProbe.Output -ne $ExtensionName) {
         Write-Err "Azure CLI '$ExtensionName' extension could not be installed."
+        exit 1
+    }
+}
+
+function New-AzExtensionCachePath {
+    return (Join-Path $env:TEMP ("cliextensions-bastion-proxy-{0}" -f [Guid]::NewGuid().ToString('N')))
+}
+
+function Test-AzExtensionCache {
+    $extensionChecks = @(
+        @{
+            Name    = 'bastion'
+            Command = { az network bastion --help }
+        },
+        @{
+            Name    = 'ssh'
+            Command = { az ssh --help }
+        }
+    )
+
+    foreach ($extensionCheck in $extensionChecks) {
+        $extensionPath = Join-Path $env:AZURE_EXTENSION_DIR $extensionCheck.Name
+        if (-not (Test-Path $extensionPath)) {
+            continue
+        }
+
+        $probe = Get-AzProbeText -Command $extensionCheck.Command
+        if ($probe.ExitCode -ne 0) {
+            return $probe
+        }
+    }
+
+    return (Get-AzProbeText -Command {
+            az extension list --only-show-errors --output json
+        })
+}
+
+function Ensure-AzExtensionCacheReady {
+    if (-not $env:AZURE_EXTENSION_DIR) {
+        $env:AZURE_EXTENSION_DIR = Join-Path $HOME '.azure\cliextensions-bastion-proxy'
+        Write-Info "Using dedicated Azure CLI extension cache: $env:AZURE_EXTENSION_DIR"
+    }
+    else {
+        Write-Info "Using Azure CLI extension cache: $env:AZURE_EXTENSION_DIR"
+    }
+
+    New-Item -ItemType Directory -Force -Path $env:AZURE_EXTENSION_DIR | Out-Null
+
+    $cacheProbe = Test-AzExtensionCache
+    if ($cacheProbe.ExitCode -eq 0) {
+        return
+    }
+
+    $failedPath = $env:AZURE_EXTENSION_DIR
+    $fallbackPath = New-AzExtensionCachePath
+    $failureText = Get-AzFailureText -ProbeResult $cacheProbe
+
+    $env:AZURE_EXTENSION_DIR = $fallbackPath
+    New-Item -ItemType Directory -Force -Path $env:AZURE_EXTENSION_DIR | Out-Null
+    Write-Warn "Azure CLI extension cache '$failedPath' is unavailable. Using fresh cache '$env:AZURE_EXTENSION_DIR' for this run."
+    Write-Warn $failureText
+
+    $cacheProbe = Test-AzExtensionCache
+    if ($cacheProbe.ExitCode -ne 0) {
+        Write-Err "Azure CLI extension cache could not be initialized."
+        Write-Err (Get-AzFailureText -ProbeResult $cacheProbe)
         exit 1
     }
 }
@@ -370,11 +480,7 @@ function Write-CommandLogTail {
 Write-Info 'Checking prerequisites...'
 Install-AzureCliIfMissing
 
-if (-not $env:AZURE_EXTENSION_DIR) {
-    $env:AZURE_EXTENSION_DIR = Join-Path $HOME '.azure\cliextensions-bastion-proxy'
-    Write-Info "Using dedicated Azure CLI extension cache: $env:AZURE_EXTENSION_DIR"
-}
-New-Item -ItemType Directory -Force -Path $env:AZURE_EXTENSION_DIR | Out-Null
+Ensure-AzExtensionCacheReady
 
 Install-AzExtensionIfMissing -ExtensionName 'bastion'
 Install-AzExtensionIfMissing -ExtensionName 'ssh'
@@ -424,9 +530,17 @@ Write-Ok "Using: $subName ($SubscriptionId)"
 # ── Resolve VM resource ID ────────────────────────────────────────────────────
 
 Write-Info "Resolving VM '$VmName' in resource group '$ResourceGroup'..."
-$vmLookup = Get-AzProbeText -Command { az vm show --name $VmName --resource-group $ResourceGroup --query id --output tsv }
+$vmLookup = Get-AzProbeText -Command {
+    az vm show --only-show-errors --name $VmName --resource-group $ResourceGroup --query id --output tsv
+}
 $vmId = $vmLookup.Output
-if ($vmLookup.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($vmId)) {
+if ($vmLookup.ExitCode -ne 0) {
+    Write-Err "Failed to resolve VM '$VmName' in resource group '$ResourceGroup'."
+    Write-Err (Get-AzFailureText -ProbeResult $vmLookup)
+    exit 1
+}
+
+if ([string]::IsNullOrWhiteSpace($vmId)) {
     Write-Err "VM '$VmName' not found in resource group '$ResourceGroup'"
     exit 1
 }
@@ -436,6 +550,7 @@ Write-Ok 'VM found'
 
 $vmStateLookup = Get-AzProbeText -Command {
     az vm get-instance-view `
+        --only-show-errors `
         --name $VmName `
         --resource-group $ResourceGroup `
         --query "instanceView.statuses[?contains(code,'PowerState')].displayStatus | [0]" `
@@ -444,6 +559,7 @@ $vmStateLookup = Get-AzProbeText -Command {
 $vmState = $vmStateLookup.Output
 if ($vmStateLookup.ExitCode -ne 0) {
     Write-Err "Failed to query VM power state for '$VmName'"
+    Write-Err (Get-AzFailureText -ProbeResult $vmStateLookup)
     exit 1
 }
 
@@ -475,6 +591,7 @@ if ($vmState -ne 'VM running') {
 Write-Info "Checking Bastion host '$BastionName'..."
 $bastionLookup = Get-AzProbeText -Command {
     az network bastion show `
+        --only-show-errors `
         --name $BastionName `
         --resource-group $ResourceGroup `
         --query provisioningState `
@@ -482,7 +599,13 @@ $bastionLookup = Get-AzProbeText -Command {
 }
 $bastionState = $bastionLookup.Output
 
-if ($bastionLookup.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($bastionState)) {
+if ($bastionLookup.ExitCode -ne 0) {
+    Write-Err "Failed to query Bastion host '$BastionName' in resource group '$ResourceGroup'."
+    Write-Err (Get-AzFailureText -ProbeResult $bastionLookup)
+    exit 1
+}
+
+if ([string]::IsNullOrWhiteSpace($bastionState)) {
     Write-Err "Bastion '$BastionName' not found in resource group '$ResourceGroup'"
     exit 1
 }

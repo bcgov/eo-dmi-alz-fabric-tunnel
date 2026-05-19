@@ -74,12 +74,88 @@ fi
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-err()  { echo -e "${RED}[ERROR]${RESET} $*" >&2; }
-info() { echo -e "${CYAN}[INFO]${RESET}  $*"; }
-ok()   { echo -e "${GREEN}[ OK ]${RESET}  $*"; }
-warn() { echo -e "${YELLOW}[WARN]${RESET}  $*"; }
+err()  { printf '%b%s\n' "${RED}[ERROR]${RESET} " "$*" >&2; }
+info() { printf '%b%s\n' "${CYAN}[INFO]${RESET}  " "$*"; }
+ok()   { printf '%b%s\n' "${GREEN}[ OK ]${RESET}  " "$*"; }
+warn() { printf '%b%s\n' "${YELLOW}[WARN]${RESET}  " "$*"; }
 trim_cr() { tr -d '\r'; }
 command_exists() { command -v "$1" &>/dev/null; }
+
+AZ_PROBE_OUTPUT=""
+
+az_probe() {
+  local output=""
+  local exit_code=0
+
+  set +e
+  output=$("$@" 2>&1)
+  exit_code=$?
+  set -e
+
+  AZ_PROBE_OUTPUT=$(printf '%s' "$output" | trim_cr)
+  return "$exit_code"
+}
+
+get_az_failure_text() {
+  local exit_code=${1:-1}
+
+  if [[ -n "$AZ_PROBE_OUTPUT" ]]; then
+    printf '%s\n' "$AZ_PROBE_OUTPUT"
+    return 0
+  fi
+
+  printf 'Azure CLI exited with code %s.\n' "$exit_code"
+}
+
+print_az_output() {
+  local log_function=$1
+  local message_text=$2
+
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    "$log_function" "$line"
+  done <<< "$message_text"
+}
+
+print_az_failure() {
+  local exit_code=${1:-1}
+  print_az_output err "$(get_az_failure_text "$exit_code")"
+}
+
+print_az_warning() {
+  local exit_code=${1:-1}
+  print_az_output warn "$(get_az_failure_text "$exit_code")"
+}
+
+should_retry_az_failure() {
+  [[ "$AZ_PROBE_OUTPUT" == *"ConnectionResetError"* ]] \
+    || [[ "$AZ_PROBE_OUTPUT" == *"Connection aborted"* ]] \
+    || [[ "$AZ_PROBE_OUTPUT" == *"RemoteDisconnected"* ]] \
+    || [[ "$AZ_PROBE_OUTPUT" == *"temporarily unavailable"* ]]
+}
+
+az_probe_with_retry() {
+  local max_attempts=$1
+  local delay_seconds=$2
+  local attempt=1
+  local exit_code=0
+  shift 2
+
+  while true; do
+    if az_probe "$@"; then
+      return 0
+    fi
+
+    exit_code=$?
+    if ! should_retry_az_failure || (( attempt >= max_attempts )); then
+      return "$exit_code"
+    fi
+
+    warn "Azure CLI command failed with a transient connection error. Retrying in ${delay_seconds}s (attempt ${attempt}/${max_attempts})..."
+    sleep "$delay_seconds"
+    attempt=$((attempt + 1))
+  done
+}
 
 detect_os() {
   case "$(uname -s 2>/dev/null || echo unknown)" in
@@ -299,36 +375,130 @@ find_az_command() {
   return 1
 }
 
-ensure_azure_extension_dir() {
-  local extension_dir_input="${AZURE_EXTENSION_DIR:-${HOME}/.azure/cliextensions-bastion-proxy}"
-  local extension_dir_fs="$extension_dir_input"
-  local extension_dir_cli="$extension_dir_input"
+set_azure_extension_dir() {
+  local extension_dir_input=$1
+
+  AZURE_EXTENSION_DIR_FS="$extension_dir_input"
+  AZURE_EXTENSION_DIR_CLI="$extension_dir_input"
 
   if [[ "$(detect_os)" == "windows" ]]; then
     if [[ "$extension_dir_input" =~ ^[A-Za-z]:[\\/].*$ ]]; then
-      extension_dir_fs=$(windows_path_to_unix "$extension_dir_input")
+      AZURE_EXTENSION_DIR_FS=$(windows_path_to_unix "$extension_dir_input")
     fi
-    extension_dir_cli=$(unix_path_to_windows "$extension_dir_fs")
+    AZURE_EXTENSION_DIR_CLI=$(unix_path_to_windows "$AZURE_EXTENSION_DIR_FS")
   fi
 
-  mkdir -p "$extension_dir_fs"
-  export AZURE_EXTENSION_DIR="$extension_dir_cli"
+  export AZURE_EXTENSION_DIR="$AZURE_EXTENSION_DIR_CLI"
+}
+
+new_az_extension_cache_path() {
+  local temp_root="${TMPDIR:-${TMP:-${TEMP:-/tmp}}}"
+  mktemp -d "${temp_root%/}/cliextensions-bastion-proxy.XXXXXX"
+}
+
+test_az_extension_cache() {
+  local extension_name=""
+  local extension_path=""
+  local metadata_path=""
+
+  shopt -s nullglob
+
+  for extension_name in bastion ssh; do
+    extension_path="${AZURE_EXTENSION_DIR_FS%/}/${extension_name}"
+    if [[ ! -e "$extension_path" ]]; then
+      continue
+    fi
+
+    if ! find "$extension_path" -maxdepth 1 -mindepth 1 -print >/dev/null 2>&1; then
+      AZ_PROBE_OUTPUT="Azure CLI extension cache path '$extension_path' is not readable."
+      shopt -u nullglob
+      return 1
+    fi
+
+    for metadata_path in "$extension_path"/azext_*/azext_metadata.json "$extension_path"/*.dist-info; do
+      if [[ ! -r "$metadata_path" ]]; then
+        AZ_PROBE_OUTPUT="Azure CLI extension cache path '$metadata_path' is not readable."
+        shopt -u nullglob
+        return 1
+      fi
+
+      if [[ -d "$metadata_path" ]] && ! ls "$metadata_path" >/dev/null 2>&1; then
+        AZ_PROBE_OUTPUT="Azure CLI extension cache path '$metadata_path' is not readable."
+        shopt -u nullglob
+        return 1
+      fi
+    done
+  done
+
+  shopt -u nullglob
+  return 0
+}
+
+ensure_azure_extension_dir() {
+  local extension_dir_input="${AZURE_EXTENSION_DIR:-${HOME}/.azure/cliextensions-bastion-proxy}"
+  local cache_probe_exit_code=0
+  local failed_path=""
+  local fallback_dir=""
+
+  set_azure_extension_dir "$extension_dir_input"
+  mkdir -p "$AZURE_EXTENSION_DIR_FS"
   info "Using dedicated Azure CLI extension cache: ${AZURE_EXTENSION_DIR}"
+
+  if test_az_extension_cache; then
+    return 0
+  fi
+
+  cache_probe_exit_code=$?
+  failed_path="$AZURE_EXTENSION_DIR"
+  fallback_dir=$(new_az_extension_cache_path)
+
+  warn "Azure CLI extension cache '${failed_path}' is unavailable. Using fresh cache '$(unix_path_to_windows "$fallback_dir")' for this run."
+  print_az_warning "$cache_probe_exit_code"
+
+  set_azure_extension_dir "$fallback_dir"
+  mkdir -p "$AZURE_EXTENSION_DIR_FS"
+
+  if ! test_az_extension_cache; then
+    cache_probe_exit_code=$?
+    err "Azure CLI extension cache could not be initialized."
+    print_az_failure "$cache_probe_exit_code"
+    exit 1
+  fi
 }
 
 install_az_extension_if_missing() {
   local extension_name=$1
   local installed_name=""
+  local probe_exit_code=0
 
-  installed_name=$(az extension list --only-show-errors --query "[?name=='${extension_name}'].name | [0]" --output tsv 2>/dev/null | trim_cr || true)
+  if ! az_probe az extension list --only-show-errors --query "[?name=='${extension_name}'].name | [0]" --output tsv; then
+    probe_exit_code=$?
+    err "Azure CLI could not inspect installed extensions in '${AZURE_EXTENSION_DIR}'."
+    print_az_failure "$probe_exit_code"
+    exit 1
+  fi
+
+  installed_name="$AZ_PROBE_OUTPUT"
   if [[ "$installed_name" == "$extension_name" ]]; then
     return 0
   fi
 
-  info "Installing Azure CLI '${extension_name}' extension..."
-  az extension add --name "$extension_name" --yes --only-show-errors
+  info "Installing Azure CLI '${extension_name}' extension. This can take a minute on first use of a fresh cache."
+  if ! az_probe az extension add --name "$extension_name" --yes --only-show-errors; then
+    probe_exit_code=$?
+    err "Azure CLI '${extension_name}' extension could not be installed."
+    print_az_failure "$probe_exit_code"
+    exit 1
+  fi
 
-  installed_name=$(az extension list --only-show-errors --query "[?name=='${extension_name}'].name | [0]" --output tsv 2>/dev/null | trim_cr || true)
+  if ! az_probe az extension list --only-show-errors --query "[?name=='${extension_name}'].name | [0]" --output tsv; then
+    probe_exit_code=$?
+    err "Azure CLI '${extension_name}' extension could not be validated after installation."
+    print_az_failure "$probe_exit_code"
+    exit 1
+  fi
+
+  installed_name="$AZ_PROBE_OUTPUT"
   if [[ "$installed_name" != "$extension_name" ]]; then
     err "Azure CLI '${extension_name}' extension could not be installed."
     exit 1
@@ -336,6 +506,8 @@ install_az_extension_if_missing() {
 }
 
 AZ_COMMAND=""
+AZURE_EXTENSION_DIR_FS=""
+AZURE_EXTENSION_DIR_CLI=""
 
 az() {
   "$AZ_COMMAND" "$@"
@@ -447,7 +619,9 @@ usage() {
 
 is_port_in_use() {
   local port=$1
-  if command -v ss &>/dev/null; then
+  if [[ "$(detect_os)" == "windows" ]] && command -v netstat &>/dev/null; then
+    netstat -ano 2>/dev/null | tr -d '\r' | grep -qE "TCP[[:space:]]+[0-9.:]+:${port}[[:space:]]+[0-9.:]+[[:space:]]+LISTENING"
+  elif command -v ss &>/dev/null; then
     ss -tlnp 2>/dev/null | grep -qE ":${port}[[:space:]]"
   elif command -v lsof &>/dev/null; then
     lsof -iTCP:"$port" -sTCP:LISTEN &>/dev/null
@@ -564,23 +738,38 @@ ok "Using: ${SUBSCRIPTION_NAME} (${SUBSCRIPTION_ID})"
 # ── Resolve VM resource ID ────────────────────────────────────────────────────
 
 info "Resolving VM '${VM_NAME}' in resource group '${RESOURCE_GROUP}'..."
-VM_ID=$(az vm show \
+if ! az_probe_with_retry 3 3 az vm show \
+  --only-show-errors \
   --name "$VM_NAME" \
   --resource-group "$RESOURCE_GROUP" \
   --query id \
-  --output tsv 2>/dev/null | trim_cr) || {
+  --output tsv; then
+  err "Failed to resolve VM '${VM_NAME}' in resource group '${RESOURCE_GROUP}'."
+  print_az_failure "$?"
+  exit 1
+fi
+
+VM_ID="$AZ_PROBE_OUTPUT"
+if [[ -z "$VM_ID" ]]; then
   err "VM '${VM_NAME}' not found in resource group '${RESOURCE_GROUP}'"
   exit 1
-}
+fi
 ok "VM found"
 
 # ── VM running check ──────────────────────────────────────────────────────────
 
-VM_STATE=$(az vm get-instance-view \
+if ! az_probe_with_retry 3 3 az vm get-instance-view \
+  --only-show-errors \
   --name "$VM_NAME" \
   --resource-group "$RESOURCE_GROUP" \
   --query "instanceView.statuses[?contains(code,'PowerState')].displayStatus | [0]" \
-  --output tsv 2>/dev/null | trim_cr || echo "unknown")
+  --output tsv; then
+  err "Failed to query VM power state for '${VM_NAME}'."
+  print_az_failure "$?"
+  exit 1
+fi
+
+VM_STATE="$AZ_PROBE_OUTPUT"
 
 if [[ "$VM_STATE" != "VM running" ]]; then
   warn "VM is not running (current state: ${VM_STATE:-unknown})"
@@ -603,11 +792,18 @@ fi
 # ── Bastion health check ──────────────────────────────────────────────────────
 
 info "Checking Bastion host '${BASTION_NAME}'..."
-BASTION_STATE=$(az network bastion show \
+if ! az_probe_with_retry 3 3 az network bastion show \
+  --only-show-errors \
   --name "$BASTION_NAME" \
   --resource-group "$RESOURCE_GROUP" \
   --query "provisioningState" \
-  --output tsv 2>/dev/null | trim_cr || echo "NotFound")
+  --output tsv; then
+  err "Failed to query Bastion host '${BASTION_NAME}' in resource group '${RESOURCE_GROUP}'."
+  print_az_failure "$?"
+  exit 1
+fi
+
+BASTION_STATE="$AZ_PROBE_OUTPUT"
 
 case "$BASTION_STATE" in
   Succeeded)
@@ -617,11 +813,18 @@ case "$BASTION_STATE" in
     info "Bastion is provisioning (state: ${BASTION_STATE}). Waiting..."
     while true; do
       sleep 15
-      BASTION_STATE=$(az network bastion show \
+      if ! az_probe_with_retry 3 3 az network bastion show \
+        --only-show-errors \
         --name "$BASTION_NAME" \
         --resource-group "$RESOURCE_GROUP" \
         --query "provisioningState" \
-        --output tsv 2>/dev/null | trim_cr)
+        --output tsv; then
+        err "Failed to query Bastion provisioning state while waiting."
+        print_az_failure "$?"
+        exit 1
+      fi
+
+      BASTION_STATE="$AZ_PROBE_OUTPUT"
       [[ "$BASTION_STATE" == "Succeeded" ]] && break
       if [[ "$BASTION_STATE" == "Failed" ]]; then
         err "Bastion provisioning failed. Check the Azure portal."
@@ -630,7 +833,7 @@ case "$BASTION_STATE" in
     done
     ok "Bastion is ready"
     ;;
-  NotFound)
+  "")
     err "Bastion '${BASTION_NAME}' not found in resource group '${RESOURCE_GROUP}'"
     exit 1
     ;;
@@ -712,7 +915,9 @@ log_listener_snapshot() {
   local port=$1
   local snapshot=""
 
-  if command -v ss &>/dev/null; then
+  if [[ "$(detect_os)" == "windows" ]] && command -v netstat &>/dev/null; then
+    snapshot=$(netstat -ano 2>/dev/null | tr -d '\r' | grep -E "TCP[[:space:]]+[0-9.:]+:${port}[[:space:]]+[0-9.:]+[[:space:]]+LISTENING" || true)
+  elif command -v ss &>/dev/null; then
     snapshot=$(ss -tln 2>/dev/null | grep -E ":${port}[[:space:]]" || true)
   elif command -v netstat &>/dev/null; then
     snapshot=$(netstat -ano 2>/dev/null | tr -d '\r' | grep -E ":${port}[[:space:]]" || true)
