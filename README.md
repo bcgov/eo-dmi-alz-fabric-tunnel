@@ -296,29 +296,31 @@ The script prints when the SOCKS endpoint is live (default `localhost:8228`).
 <details>
 <summary>Run the script directly from GitHub (no clone required)</summary>
 
-These variants download the script to a temp file, execute it, then delete it. Pin `<ref>`
-to a tag or commit SHA if you want a fixed script version.
+These variants download the script to a temp file, execute it, then delete it. Replace `main`
+with a tag or commit SHA if you want a fixed script version.
 
 **Bash:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<repo-owner>/<repo-name>/<ref>/infra/scripts/bastion-proxy.sh \
+curl -fsSL https://raw.githubusercontent.com/bcgov/eo-dmi-alz-bastion-jumpbox/main/infra/scripts/bastion-proxy.sh \
   | bash -s -- \
-    --resource-group <resource-group> \
-    --bastion-name   <bastion-name> \
-    --vm-name        <vm-name>
+    --subscription   ffc5e617-7f2d-4ddb-8b57-33fc43989a8c \
+    --resource-group eo-dmi-alz-bastion-jumpbox-tools \
+    --bastion-name   eo-dmi-alz-bastion-jumpbox-bastion \
+    --vm-name        eo-dmi-alz-bastion-jumpbox-jumpbox
 ```
 
 **PowerShell 7:**
 
 ```powershell
 $tmp = Join-Path ([System.IO.Path]::GetTempPath()) 'bastion-proxy.ps1'
-Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/<repo-owner>/<repo-name>/<ref>/infra/scripts/bastion-proxy.ps1' -OutFile $tmp
+Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/bcgov/eo-dmi-alz-bastion-jumpbox/main/infra/scripts/bastion-proxy.ps1' -OutFile $tmp
 try {
   pwsh -ExecutionPolicy Bypass -File $tmp `
-    -ResourceGroup <resource-group> `
-    -BastionName   <bastion-name> `
-    -VmName        <vm-name>
+    -SubscriptionId ffc5e617-7f2d-4ddb-8b57-33fc43989a8c `
+    -ResourceGroup eo-dmi-alz-bastion-jumpbox-tools `
+    -BastionName   eo-dmi-alz-bastion-jumpbox-bastion `
+    -VmName        eo-dmi-alz-bastion-jumpbox-jumpbox
 }
 finally {
   Remove-Item $tmp -Force -ErrorAction SilentlyContinue
@@ -329,12 +331,13 @@ finally {
 
 ```powershell
 $tmp = Join-Path $env:TEMP 'bastion-proxy.ps1'
-Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/<repo-owner>/<repo-name>/<ref>/infra/scripts/bastion-proxy.ps1' -OutFile $tmp
+Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/bcgov/eo-dmi-alz-bastion-jumpbox/main/infra/scripts/bastion-proxy.ps1' -OutFile $tmp
 try {
   powershell.exe -ExecutionPolicy Bypass -File $tmp `
-    -ResourceGroup <resource-group> `
-    -BastionName   <bastion-name> `
-    -VmName        <vm-name>
+    -SubscriptionId ffc5e617-7f2d-4ddb-8b57-33fc43989a8c `
+    -ResourceGroup eo-dmi-alz-bastion-jumpbox-tools `
+    -BastionName   eo-dmi-alz-bastion-jumpbox-bastion `
+    -VmName        eo-dmi-alz-bastion-jumpbox-jumpbox
 }
 finally {
   Remove-Item $tmp -Force -ErrorAction SilentlyContinue

@@ -33,7 +33,7 @@
 #   .\scripts\bastion-proxy.ps1 -ResourceGroup <resource-group> -BastionName <bastion-name> -VmName <vm-name> -SubscriptionId <subscription-id>
 #
 #   # Example for this repo deployment:
-#   .\scripts\bastion-proxy.ps1 -ResourceGroup eo-dmi-alz-bastion-jumpbox-tools -BastionName eo-dmi-alz-bastion-jumpbox-bastion -VmName eo-dmi-alz-bastion-jumpbox-jumpbox
+#   .\scripts\bastion-proxy.ps1 -SubscriptionId ffc5e617-7f2d-4ddb-8b57-33fc43989a8c -ResourceGroup eo-dmi-alz-bastion-jumpbox-tools -BastionName eo-dmi-alz-bastion-jumpbox-bastion -VmName eo-dmi-alz-bastion-jumpbox-jumpbox
 #
 # =============================================================================
 

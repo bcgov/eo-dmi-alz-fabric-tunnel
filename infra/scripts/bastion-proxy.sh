@@ -46,7 +46,7 @@
 #   ./scripts/bastion-proxy.sh -g <resource-group> -b <bastion-name> -v <vm-name> -s <subscription-id>
 #
 #   # Example for this repo deployment:
-#   ./scripts/bastion-proxy.sh -g eo-dmi-alz-bastion-jumpbox-tools -b eo-dmi-alz-bastion-jumpbox-bastion -v eo-dmi-alz-bastion-jumpbox-jumpbox
+#   ./scripts/bastion-proxy.sh -s ffc5e617-7f2d-4ddb-8b57-33fc43989a8c -g eo-dmi-alz-bastion-jumpbox-tools -b eo-dmi-alz-bastion-jumpbox-bastion -v eo-dmi-alz-bastion-jumpbox-jumpbox
 #
 #   # Derive names from Terraform outputs (run from initial-setup/infra/):
 #   ./scripts/bastion-proxy.sh \

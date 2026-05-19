@@ -319,6 +319,20 @@ resource "azurerm_role_assignment" "automation_network_contributor" {
   principal_id         = azurerm_automation_account.jumpbox.identity[0].principal_id
 }
 
+resource "azurerm_role_assignment" "automation_bastion_subnet_network_contributor" {
+  count = var.enable_bastion && var.enable_bastion_automation && var.bastion_subnet_id != null && trimspace(var.bastion_subnet_id) != "" ? 1 : 0
+
+  scope                = var.bastion_subnet_id
+  role_definition_name = "Network Contributor"
+  principal_id         = azurerm_automation_account.jumpbox.identity[0].principal_id
+  lifecycle {
+    precondition {
+      condition     = var.bastion_subnet_id != null
+      error_message = "bastion_subnet_id must be provided when bastion automation is enabled."
+    }
+  }
+}
+
 resource "azurerm_role_assignment" "automation_vm_contributor" {
   scope                = azurerm_linux_virtual_machine.jumpbox.id
   role_definition_name = "Virtual Machine Contributor"
