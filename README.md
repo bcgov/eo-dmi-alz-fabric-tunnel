@@ -234,6 +234,31 @@ You need **all** of the following before the proxy will work.
 az extension add --name bastion
 az extension add --name ssh
 ```
+
+<a id="azure-cli-python-runtime-tip"></a>
+> [!TIP]
+> If `az extension add` runs into `pip` issues, make sure you point the Python path at the
+> Azure CLI runtime itself instead of a different Python install.
+>
+> **PowerShell**
+>
+> ```powershell
+> (Get-Command az).Path
+> Get-Content (Get-Command az).Path | Select-String 'python.exe'
+> $azRoot = Split-Path (Split-Path (Get-Command az).Path -Parent) -Parent
+> Join-Path $azRoot 'python.exe'
+> ```
+>
+> **Bash**
+>
+> ```bash
+> AZ_CMD="$(command -v az)"
+> printf '%s\n' "$AZ_CMD"
+> sed -n '1p' "$AZ_CMD"
+> ```
+>
+> On Windows MSI installs, the Azure CLI Python is typically
+> `C:\Program Files\Microsoft SDKs\Azure\CLI2\python.exe`.
 </details>
 
 ---
@@ -298,6 +323,9 @@ The script prints when the SOCKS endpoint is live (default `localhost:8228`).
 
 These variants download the script to a temp file, execute it, then delete it. Replace `main`
 with a tag or commit SHA if you want a fixed script version.
+
+If the script needs to install Azure CLI extensions and `az extension add` hits `pip` errors,
+see the [Azure CLI Python runtime tip](#azure-cli-python-runtime-tip) before retrying.
 
 **Bash:**
 
@@ -698,6 +726,7 @@ storage, optional GitHub environment secrets), follow **[initial-azure-setup.md]
 | Script reports the VM is stopped | Outside auto-start window | Let the script start it when prompted, wait for next weekday 15:00 UTC, or `az vm start` manually |
 | Browser still uses the normal internet path | Default profile ignores the proxy flag | Launch a dedicated profile with `--proxy-server="socks5://127.0.0.1:8228"` |
 | `bastion` command not found | Missing CLI extensions | `az extension add --name bastion` and `--name ssh` |
+| `az extension add` fails with `pip` errors | Extension install is picking up the wrong Python runtime | Find the Python used by `az`, point your Python path at the Azure CLI runtime, then retry the extension install |
 | Tunnel closes after long idle | Entra token expiry | Re-run `az login` with MFA and restart the proxy script |
 | Data client times out, but tunnel is "open" | Network path / private DNS between jumpbox and target | Verify peering, NSG, and private DNS; try the target's private IP directly to isolate DNS |
 
