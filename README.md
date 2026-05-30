@@ -284,42 +284,7 @@ az account set --subscription ffc5e617-7f2d-4ddb-8b57-33fc43989a8c
 
 A browser opens for MFA. Only browser-based Entra login is supported.
 
-### 2. Start the SOCKS proxy
-
-Pick the entry point that matches your shell, then jump to step 3
-
-#### macOS / Linux / Git Bash
-
-```bash
-./infra/scripts/bastion-proxy.sh \
-  --resource-group eo-dmi-alz-bastion-jumpbox-tools \
-  --bastion-name   eo-dmi-alz-bastion-jumpbox-bastion \
-  --vm-name        eo-dmi-alz-bastion-jumpbox-jumpbox
-```
-
-#### Windows (PowerShell 7+)
-
-```powershell
-.\infra\scripts\bastion-proxy.ps1 `
-  -ResourceGroup eo-dmi-alz-bastion-jumpbox-tools `
-  -BastionName   eo-dmi-alz-bastion-jumpbox-bastion `
-  -VmName        eo-dmi-alz-bastion-jumpbox-jumpbox
-```
-
-If Windows execution policy blocks local scripts, prefix with a bypass:
-
-```powershell
-pwsh -ExecutionPolicy Bypass -File .\infra\scripts\bastion-proxy.ps1 `
-  -ResourceGroup eo-dmi-alz-bastion-jumpbox-tools `
-  -BastionName   eo-dmi-alz-bastion-jumpbox-bastion `
-  -VmName        eo-dmi-alz-bastion-jumpbox-jumpbox
-```
-
-The script prints when the SOCKS endpoint is live (default `localhost:8228`).
-**Keep this terminal window open** — closing it tears down the tunnel.
-
-<details>
-<summary>Run the script directly from GitHub (no clone required)</summary>
+### 2. Start the SOCKS proxy directly from GitHub (no clone required)
 
 These variants download the script to a temp file, execute it, then delete it. Replace `main`
 with a tag or commit SHA if you want a fixed script version.
@@ -372,13 +337,22 @@ finally {
 }
 ```
 
+The script prints when the SOCKS endpoint is live (default `localhost:8228`).
+**Keep this terminal window open** — closing it tears down the tunnel.
+
+> [!TIP]
+> On Windows, the PowerShell script automatically opens a dedicated proxy-configured browser
+> window after the SOCKS tunnel is ready. It prefers **Edge** and falls back to **Chrome** if
+> Edge is not installed.
+
 > Downloading to a `.ps1` first (instead of `iex`-piping) avoids quoting / variable-expansion
 > issues and works correctly with the script's `CmdletBinding()` + `param()` signature.
-</details>
 
-### 3. Point a browser at the proxy
+### 3. Continue in the browser
 
-Launch a **dedicated browser profile** so regular browsing isn't routed through the tunnel.
+If you ran the PowerShell script on Windows and it opened a browser automatically, use that
+browser window for private access. Otherwise, launch a **dedicated browser profile** so regular
+browsing isn't routed through the tunnel.
 
 ```powershell
 # Edge
@@ -391,6 +365,37 @@ chrome.exe --user-data-dir="$env:TEMP\bastion-jumpbox-chrome" --proxy-server="so
 Then browse to your private endpoint — e.g. `https://<account>.dfs.core.windows.net/`.
 
 ➡️ Need a database or cache client instead? See [Native tunneling for data clients](#native-tunneling-for-data-clients).
+
+### 4. Optional: run from a local clone instead
+
+If you already cloned this repo, use the local entry point that matches your shell.
+
+#### macOS / Linux / Git Bash
+
+```bash
+./infra/scripts/bastion-proxy.sh \
+  --resource-group eo-dmi-alz-bastion-jumpbox-tools \
+  --bastion-name   eo-dmi-alz-bastion-jumpbox-bastion \
+  --vm-name        eo-dmi-alz-bastion-jumpbox-jumpbox
+```
+
+#### Windows (PowerShell 7+)
+
+```powershell
+.\infra\scripts\bastion-proxy.ps1 `
+  -ResourceGroup eo-dmi-alz-bastion-jumpbox-tools `
+  -BastionName   eo-dmi-alz-bastion-jumpbox-bastion `
+  -VmName        eo-dmi-alz-bastion-jumpbox-jumpbox
+```
+
+If Windows execution policy blocks local scripts, prefix with a bypass:
+
+```powershell
+pwsh -ExecutionPolicy Bypass -File .\infra\scripts\bastion-proxy.ps1 `
+  -ResourceGroup eo-dmi-alz-bastion-jumpbox-tools `
+  -BastionName   eo-dmi-alz-bastion-jumpbox-bastion `
+  -VmName        eo-dmi-alz-bastion-jumpbox-jumpbox
+```
 
 ---
 
@@ -724,7 +729,7 @@ storage, optional GitHub environment secrets), follow **[initial-azure-setup.md]
 | `az network bastion ssh` fails with auth errors | Expired or missing Entra session | Re-run `az login --tenant 6fdb5200-3d0d-4a8a-b036-d3685e359adc`, complete MFA, confirm with `az account show` |
 | Tunnel opens, then `Permission denied (publickey).` | Missing VM Login RBAC, or assignment not yet propagated | Assign `Virtual Machine Administrator Login` / `User Login` on the VM (or inherited scope); wait a few minutes |
 | Proxy starts but browser can't resolve a private hostname | DNS resolved locally instead of remotely | Enable **Remote DNS** / `proxy DNS when using SOCKS v5` and use SOCKS5 (not SOCKS4) |
-| Script reports the VM is stopped | Outside auto-start window | Let the script start it when prompted, wait for next weekday 15:00 UTC, or `az vm start` manually |
+| Script reports the VM is stopped | Outside auto-start window | Let the script start it when prompted, wait for next weekday 16:00 UTC, or `az vm start` manually |
 | Browser still uses the normal internet path | Default profile ignores the proxy flag | Launch a dedicated profile with `--proxy-server="socks5://127.0.0.1:8228"` |
 | `bastion` command not found | Missing CLI extensions | `az extension add --name bastion` and `--name ssh` |
 | `az extension add` fails with `pip` errors | Extension install is picking up the wrong Python runtime | Find the Python used by `az`, point your Python path at the Azure CLI runtime, then retry the extension install |
