@@ -16,9 +16,9 @@ periodic assessment** so update compliance is visible and ✅ aligned with the
 ## TL;DR
 
 ```text
-1. az login                                          # browser MFA
-2. ./infra/scripts/bastion-proxy.{sh|ps1} ...        # tunnel up on localhost:8228
-3. Launch a dedicated browser profile → SOCKS5 127.0.0.1:8228
+1. Run bastion-proxy.{sh|ps1}                         # installs az cli/extensions if needed
+2. Complete browser login + MFA if Azure CLI prompts
+3. Use the dedicated proxy browser                    # auto-opens on Windows PowerShell when available
 ```
 
 You will need `Virtual Machine Administrator Login` (or `User Login`) RBAC on the jumpbox.
@@ -55,7 +55,7 @@ For database / cache clients, see [Native tunneling for data clients](#native-tu
 | **What** | Azure Bastion + minimal Ubuntu jumpbox in a private VNet |
 | **Why** | Reach private endpoints (Storage, Fabric, Key Vault, Postgres, Redis, …) from a workstation without a VPN or public IPs |
 | **Who** | Developers with Entra access to the subscription and VM login RBAC on the jumpbox |
-| **How auth** | Browser-based `az login` with MFA → Entra → Bastion → jumpbox |
+| **How auth** | Browser-based `az login --tenant 6fdb5200-3d0d-4a8a-b036-d3685e359adc` with MFA → Entra → Bastion → jumpbox |
 | **How traffic** | SOCKS5 dynamic proxy (`ssh -D`) for browsers, local port forward (`ssh -L`) for TCP clients |
 | **Default SOCKS port** | `127.0.0.1:8228` |
 | **Time to first connection** | ~2 minutes once prerequisites are in place |
@@ -109,11 +109,11 @@ sequenceDiagram
   participant VM as Jumpbox VM
   participant Endpoint as Private endpoint
 
-  Dev->>CLI: az login --tenant <tenant-id>
-  CLI->>Browser: Open browser login
+  Dev->>CLI: Run bastion-proxy script
+  CLI->>CLI: Install Azure CLI + extensions if missing
+  CLI->>Browser: Open browser login if session is missing
   Browser->>Entra: Sign in + MFA
   Entra-->>CLI: Session token
-  Dev->>CLI: Run bastion-proxy script
   CLI->>ARM: Resolve VM / Bastion
   CLI->>ARM: Start VM if stopped (with consent)
   CLI->>Bastion: az network bastion ssh --auth-type AAD
@@ -131,7 +131,7 @@ flowchart TD
   prereq -- no --> install[Install Azure CLI<br/>+ bastion / ssh extensions]
   prereq -- yes --> login{Logged in?}
   install --> login
-  login -- no --> browserLogin[az login<br/>browser MFA]
+  login -- no --> browserLogin[az login --tenant 6fdb5200-3d0d-4a8a-b036-d3685e359adc<br/>browser MFA]
   login -- yes --> sub[Set subscription]
   browserLogin --> sub
   sub --> vmState{VM running?}
@@ -266,25 +266,26 @@ az extension add --name ssh
 ## Quick start
 
 > Time to first connection: **~2 minutes** once the prerequisites above are in place.
+> If Azure CLI must be installed on first run, allow extra time.
 
-### 1. Sign in to Azure
+### 1. Start the SOCKS proxy directly from GitHub (no clone required)
 
-```bash
-az login --tenant 6fdb5200-3d0d-4a8a-b036-d3685e359adc
-az account set --subscription ffc5e617-7f2d-4ddb-8b57-33fc43989a8c
-```
+The direct-from-GitHub path is self-bootstrapping. The script:
 
-| Placeholder | Example for this deployment |
+- installs Azure CLI if missing where automatic install is supported on your platform
+- installs the `bastion` and `ssh` Azure CLI extensions if they are missing
+- checks for a valid Azure CLI session in the BC Gov tenant (`6fdb5200-3d0d-4a8a-b036-d3685e359adc`)
+- if needed, opens browser-based Entra login for that tenant and waits for MFA to complete before continuing
+
+Only browser-based Entra login in the BC Gov tenant is supported.
+
+| Value | Example for this deployment |
 |---|---|
 | `<tenant-id>` | `6fdb5200-3d0d-4a8a-b036-d3685e359adc` |
 | `<subscription-id>` | `ffc5e617-7f2d-4ddb-8b57-33fc43989a8c` |
 | `<resource-group>` | `eo-dmi-alz-bastion-jumpbox-tools` |
 | `<bastion-name>` | `eo-dmi-alz-bastion-jumpbox-bastion` |
 | `<vm-name>` | `eo-dmi-alz-bastion-jumpbox-jumpbox` |
-
-A browser opens for MFA. Only browser-based Entra login is supported.
-
-### 2. Start the SOCKS proxy directly from GitHub (no clone required)
 
 These variants download the script to a temp file, execute it, then delete it. Replace `main`
 with a tag or commit SHA if you want a fixed script version.
@@ -348,7 +349,7 @@ The script prints when the SOCKS endpoint is live (default `localhost:8228`).
 > Downloading to a `.ps1` first (instead of `iex`-piping) avoids quoting / variable-expansion
 > issues and works correctly with the script's `CmdletBinding()` + `param()` signature.
 
-### 3. Continue in the browser
+### 2. Continue in the browser
 
 If you ran the PowerShell script on Windows and it opened a browser automatically, use that
 browser window for private access. Otherwise, launch a **dedicated browser profile** so regular
@@ -366,9 +367,11 @@ Then browse to your private endpoint — e.g. `https://<account>.dfs.core.window
 
 ➡️ Need a database or cache client instead? See [Native tunneling for data clients](#native-tunneling-for-data-clients).
 
-### 4. Optional: run from a local clone instead
+### 3. Optional: run from a local clone instead
 
-If you already cloned this repo, use the local entry point that matches your shell.
+If you already cloned this repo, use the local entry point that matches your shell. The local
+scripts follow the same Azure CLI install, extension install, and login checks as the no-clone
+examples above.
 
 #### macOS / Linux / Git Bash
 
@@ -735,7 +738,7 @@ storage, optional GitHub environment secrets), follow **[initial-azure-setup.md]
 | Browser still uses the normal internet path | Default profile ignores the proxy flag | Launch a dedicated profile with `--proxy-server="socks5://127.0.0.1:8228"` |
 | `bastion` command not found | Missing CLI extensions | `az extension add --name bastion` and `--name ssh` |
 | `az extension add` fails with `pip` errors | Extension install is picking up the wrong Python runtime | Find the Python used by `az`, point your Python path at the Azure CLI runtime, then retry the extension install |
-| Tunnel closes after long idle | Entra token expiry | Re-run `az login` with MFA and restart the proxy script |
+| Tunnel closes after long idle | Entra token expiry | Re-run `az login --tenant 6fdb5200-3d0d-4a8a-b036-d3685e359adc` with MFA and restart the proxy script |
 | Data client times out, but tunnel is "open" | Network path / private DNS between jumpbox and target | Verify peering, NSG, and private DNS; try the target's private IP directly to isolate DNS |
 
 ---

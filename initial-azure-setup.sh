@@ -37,8 +37,8 @@
 # Before running this script, ensure the following requirements are met:
 #
 # Azure Requirements:
-# - Azure CLI installed and logged in (run: az login)
-#    complete the Entra MFA prompt in the browser opened by az login
+# - Azure CLI installed and logged in (run: az login --tenant 6fdb5200-3d0d-4a8a-b036-d3685e359adc)
+#    complete the Entra MFA prompt in the browser opened by Azure CLI login
 # - Appropriate permissions in Azure subscription (Owner of security group DO_PuC_Azure_Live_{LicensePlate}_Contributor)
 #   By Default, the Product Owner in Registry is the Owner of the security group. The PO needs to add other tech leads as owners who will run this script.
 #
@@ -68,6 +68,8 @@
 
 # catch errors and unset variables
 set -euo pipefail
+
+DEFAULT_TENANT_ID="6fdb5200-3d0d-4a8a-b036-d3685e359adc"
 # =============================================================================
 # Utility Functions for Script Management
 # =============================================================================
@@ -624,14 +626,22 @@ check_prerequisites() {
     # Verify user is logged into Azure CLI
     if ! az account show &> /dev/null; then
         log_error "Not logged into Azure CLI!"
-        log_error "Please run: 'az login' and complete the Entra MFA prompt in the browser"
+        log_error "Please run: 'az login --tenant ${DEFAULT_TENANT_ID}' and complete the Entra MFA prompt in the browser"
         exit 1
     fi
 
     # validate whether current logged-in user session is still valid
     if ! az account show --query "id" --output tsv &> /dev/null; then
         log_error "Current Azure session is invalid or expired!"
-        log_error "Please re-authenticate using: 'az login' and complete the Entra MFA prompt in the browser"
+        log_error "Please re-authenticate using: 'az login --tenant ${DEFAULT_TENANT_ID}' and complete the Entra MFA prompt in the browser"
+        exit 1
+    fi
+
+    local current_tenant_id
+    current_tenant_id=$(az account show --query "tenantId" --output tsv 2>/dev/null || true)
+    if [[ "$current_tenant_id" != "$DEFAULT_TENANT_ID" ]]; then
+        log_error "Azure CLI is currently using tenant '${current_tenant_id}'."
+        log_error "Please run: 'az login --tenant ${DEFAULT_TENANT_ID}' and complete the Entra MFA prompt in the browser"
         exit 1
     fi
 

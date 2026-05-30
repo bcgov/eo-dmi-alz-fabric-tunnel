@@ -50,6 +50,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Script is now inside infra/, so INFRA_DIR is the same as SCRIPT_DIR
 INFRA_DIR="${SCRIPT_DIR}"
 TFVARS_FILE="${INFRA_DIR}/terraform.tfvars"
+DEFAULT_TENANT_ID="6fdb5200-3d0d-4a8a-b036-d3685e359adc"
 
 # Backend configuration (must be set via environment variables)
 BACKEND_RESOURCE_GROUP="${BACKEND_RESOURCE_GROUP:-}"
@@ -151,8 +152,23 @@ check_prerequisites() {
         if [[ "${CI:-false}" == "true" ]]; then
             log_info "CI mode detected - assuming OIDC/service principal authentication"
         else
-            log_info "Please login to Azure..."
-            az login
+            log_info "Please login to Azure using the BC Gov tenant..."
+            az login --tenant "$DEFAULT_TENANT_ID"
+        fi
+    fi
+
+    if [[ "${CI:-false}" != "true" ]]; then
+        local expected_tenant_id="${TF_VAR_tenant_id:-$DEFAULT_TENANT_ID}"
+        local current_tenant_id
+        current_tenant_id=$(az account show --query tenantId --output tsv 2>/dev/null || true)
+        if [[ -n "$expected_tenant_id" && "$current_tenant_id" != "$expected_tenant_id" ]]; then
+            log_warning "Azure CLI is currently using tenant '${current_tenant_id}'. Re-authenticating with tenant '${expected_tenant_id}'..."
+            az login --tenant "$expected_tenant_id"
+            current_tenant_id=$(az account show --query tenantId --output tsv 2>/dev/null || true)
+            if [[ "$current_tenant_id" != "$expected_tenant_id" ]]; then
+                log_error "Azure CLI is not using the expected tenant '${expected_tenant_id}'."
+                exit 1
+            fi
         fi
     fi
     
@@ -182,7 +198,7 @@ setup_azure_auth() {
     
     # Set ARM environment variables for Terraform
     export ARM_SUBSCRIPTION_ID="${SUBSCRIPTION_ID:-$(az account show --query id -o tsv)}"
-    export ARM_TENANT_ID="${TF_VAR_tenant_id:-$(az account show --query tenantId -o tsv)}"
+    export ARM_TENANT_ID="${TF_VAR_tenant_id:-$DEFAULT_TENANT_ID}"
     
     # Check for OIDC vs CLI auth
     if [[ "${ARM_USE_OIDC:-false}" == "true" ]] || [[ "${TF_VAR_use_oidc:-false}" == "true" ]]; then

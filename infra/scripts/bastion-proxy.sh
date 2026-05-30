@@ -23,7 +23,7 @@
 #   Linux jumpbox VM (AAD auth)
 #
 # AUTHENTICATION
-#   Uses normal Azure CLI Entra browser login with MFA.
+#   Uses Azure CLI Entra browser login with MFA in the BC Gov tenant by default.
 #   Entra login alone is not enough; the authenticated user must also be
 #   authorized on the Linux VM through a manual VM login RBAC assignment.
 #
@@ -62,6 +62,7 @@ set -euo pipefail
 
 DEFAULT_SOCKS_PORT=8228
 DEFAULT_SUBSCRIPTION_ID="ffc5e617-7f2d-4ddb-8b57-33fc43989a8c"
+DEFAULT_TENANT_ID="6fdb5200-3d0d-4a8a-b036-d3685e359adc"
 
 # ── Colours (only when writing to a terminal) ─────────────────────────────────
 
@@ -695,19 +696,30 @@ ok "Prerequisites satisfied"
 
 # ── Authentication ────────────────────────────────────────────────────────────
 
-info "Checking Azure CLI login status..."
+info "Checking Azure CLI login status for tenant ${DEFAULT_TENANT_ID}..."
 if ! az account show &>/dev/null 2>&1; then
   echo ""
   info "Not logged in. Starting Entra browser authentication..."
   echo ""
-  warn "Complete the MFA prompt in the browser window opened by Azure CLI."
+  warn "Complete the MFA prompt in the browser window opened by Azure CLI for tenant ${DEFAULT_TENANT_ID}."
   echo ""
-  az login
+  az login --tenant "$DEFAULT_TENANT_ID"
   az account show &>/dev/null 2>&1 || { err "Azure CLI login did not complete successfully."; exit 1; }
 else
-  warn "Already logged in. Azure CLI sessions expire 12h after 'az login'."
+  CURRENT_TENANT_ID=$(az account show --query tenantId --output tsv | trim_cr)
+  if [[ -n "$CURRENT_TENANT_ID" && "$CURRENT_TENANT_ID" != "$DEFAULT_TENANT_ID" ]]; then
+    echo ""
+    warn "Azure CLI is currently using tenant ${CURRENT_TENANT_ID}. Re-authenticating with BC Gov tenant ${DEFAULT_TENANT_ID}..."
+    echo ""
+    az login --tenant "$DEFAULT_TENANT_ID"
+    az account show &>/dev/null 2>&1 || { err "Azure CLI login did not complete successfully."; exit 1; }
+  fi
+  warn "Already logged in. Azure CLI sessions expire 12h after Azure CLI login."
   warn "Re-run this script if you encounter authentication errors."
 fi
+
+CURRENT_TENANT_ID=$(az account show --query tenantId --output tsv | trim_cr)
+[[ "$CURRENT_TENANT_ID" == "$DEFAULT_TENANT_ID" ]] || { err "Azure CLI is not using the BC Gov tenant ${DEFAULT_TENANT_ID}."; exit 1; }
 
 # Record authentication time and compute the 12h Entra ID session expiry.
 # If already logged in, LOGIN_EPOCH is set to now (the original login time
@@ -721,7 +733,7 @@ EXPIRE_AT=$(date -d "@${EXPIRE_EPOCH}" "+%H:%M %Z" 2>/dev/null \
          || date -r  "${EXPIRE_EPOCH}"  "+%H:%M %Z" 2>/dev/null \
          || echo "12h from now")
 
-ok "Authenticated to Azure CLI"
+ok "Authenticated to Azure CLI (tenant ${CURRENT_TENANT_ID})"
 
 # ── Subscription ──────────────────────────────────────────────────────────────
 

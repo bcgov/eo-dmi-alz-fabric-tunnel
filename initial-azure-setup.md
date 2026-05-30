@@ -104,7 +104,7 @@ sequenceDiagram
 
 | Requirement | Required? | Notes |
 |---|:---:|---|
-| Azure CLI (`az`) | ✅ | Run `az login` first; complete browser MFA |
+| Azure CLI (`az`) | ✅ | Run `az login --tenant 6fdb5200-3d0d-4a8a-b036-d3685e359adc` first; complete browser MFA |
 | Terraform | ✅ | Script checks for it before proceeding |
 | GitHub CLI (`gh`) | Optional | Only when using `--create-github-secrets` |
 | Subscription + RG access | ✅ | On the target subscription and Landing Zone networking RG |
