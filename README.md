@@ -154,8 +154,8 @@ Terraform under `infra/` deploys:
 | Azure Bastion **Standard** | Native client tunneling for AAD-authenticated SSH |
 | Ubuntu jumpbox VM | Minimal Linux host, **no public IP**, Entra SSH extension installed |
 | RBAC assignments | `Virtual Machine Administrator Login` / `User Login` for configured Entra principals |
-| Auto-shutdown schedule | Daily 7 PM Pacific (DevTest schedule on the VM) |
-| Auto-start schedule | Weekdays 15:00 UTC (Azure Automation runbook) |
+| Auto-shutdown schedule | Daily 6 PM Pacific (DevTest schedule on the VM) |
+| Auto-start schedule | Weekdays 16:00 UTC (Azure Automation runbook) |
 | Log Analytics workspace | Receives `BastionAuditLogs` diagnostic stream |
 | Automatic VM Guest Patching | OS patching on the jumpbox |
 | Update Manager periodic assessment | Visibility into update compliance |
@@ -501,22 +501,23 @@ unless the target service is configured differently.
 ```mermaid
 stateDiagram-v2
   [*] --> Deallocated
-  Deallocated --> Running: Weekday 15:00 UTC<br/>Automation runbook
+  Deallocated --> Running: Weekday 16:00 UTC<br/>Automation runbook
   Deallocated --> Running: Developer starts VM<br/>(proxy script or portal)
-  Running --> Deallocated: Daily 19:00 Pacific<br/>DevTest schedule
+  Running --> Deallocated: Daily 18:00 Pacific<br/>DevTest schedule
 ```
 
 | Event | When | Where it lives |
 |---|---|---|
-| Auto-start | Weekdays 15:00 UTC | Azure Automation runbook |
-| Auto-shutdown | Daily 19:00 Pacific | DevTest auto-shutdown on the VM |
+| Auto-start | Weekdays 16:00 UTC | Azure Automation runbook |
+| Auto-shutdown | Daily 18:00 Pacific (01:00 UTC) | DevTest auto-shutdown on the VM |
 | Weekend default | VM stays stopped unless started manually | — |
 
 > [!NOTE]
 > **Time-zone math.** Azure Automation schedules in this repo are configured in **UTC**.
-> `15:00 UTC` lands at **08:00 PDT** (Mar–Nov, UTC-7) and **07:00 PST** (Nov–Mar, UTC-8).
-> The optional Bastion delete/recreate automation uses `02:00 UTC` for delete and
-> `15:00 UTC` for create.
+> `16:00 UTC` lands at **09:00 PDT** (Mar–Nov, UTC-7) and **08:00 PST** (Nov–Mar, UTC-8).
+> `01:00 UTC` (next day) lands at **18:00 PDT** (previous day, UTC-7) and **17:00 PST** (previous day, UTC-8).
+> The optional Bastion delete/recreate automation uses `01:00 UTC` for delete and
+> `16:00 UTC` for create.
 
 > [!NOTE]
 > The Automation Python runbooks in this repo are designed to be **idempotent** and

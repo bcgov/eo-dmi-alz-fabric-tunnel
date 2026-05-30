@@ -112,7 +112,7 @@ resource "azurerm_dev_test_global_vm_shutdown_schedule" "jumpbox" {
   virtual_machine_id    = azurerm_linux_virtual_machine.jumpbox.id
   location              = var.location
   enabled               = true
-  daily_recurrence_time = "0200" # 7 PM Pacific with the repo's +7 offset becomes 02:00 UTC the next day
+  daily_recurrence_time = "0100" # 6 PM Pacific with the repo's +7 offset becomes 01:00 UTC the next day
   timezone              = "UTC"
 
   notification_settings {
@@ -262,12 +262,12 @@ resource "azurerm_automation_runbook" "delete_bastion" {
 
 locals {
   automation_schedule_timezone             = "UTC"
-  automation_weekday_start_time_utc        = "15:00:00Z"
-  automation_daily_delete_bastion_time_utc = "02:00:00Z"
+  automation_weekday_start_time_utc        = "16:00:00Z"
+  automation_daily_delete_bastion_time_utc = "01:00:00Z"
 }
 
 resource "azurerm_automation_schedule" "weekday_start" {
-  name                    = "Weekday-1500UTC-Start"
+  name                    = "Weekday-1600UTC-Start"
   resource_group_name     = var.resource_group_name
   automation_account_name = azurerm_automation_account.jumpbox.name
   frequency               = "Week"
@@ -283,7 +283,7 @@ resource "azurerm_automation_schedule" "weekday_start" {
 
 resource "azurerm_automation_schedule" "weekday_create_bastion" {
   count                   = var.enable_bastion && var.enable_bastion_automation ? 1 : 0
-  name                    = "Weekday-1500UTC-Create-Bastion"
+  name                    = "Weekday-1600UTC-Create-Bastion"
   resource_group_name     = var.resource_group_name
   automation_account_name = azurerm_automation_account.jumpbox.name
   frequency               = "Week"
@@ -299,7 +299,7 @@ resource "azurerm_automation_schedule" "weekday_create_bastion" {
 
 resource "azurerm_automation_schedule" "daily_delete_bastion" {
   count                   = var.enable_bastion && var.enable_bastion_automation ? 1 : 0
-  name                    = "Daily-0200UTC-Delete-Bastion"
+  name                    = "Daily-0100UTC-Delete-Bastion"
   resource_group_name     = var.resource_group_name
   automation_account_name = azurerm_automation_account.jumpbox.name
   frequency               = "Day"
